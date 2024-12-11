@@ -255,14 +255,23 @@ class QEMUCapabilities:
             self.available = True
 
             # Get list of all available QEMU system emulators
+            found_arches = set()
+            
+            # First try using command output
             try:
-                # Try using 'which' to find qemu binaries (works on most Unix systems)
-                result = subprocess.run(['which', '-a', 'qemu-system-*'], 
+                result = subprocess.run(['ls', '-1', '/usr/bin/qemu-system-*'], 
                                      capture_output=True, text=True, shell=True)
-                qemu_binaries = result.stdout.strip().split('\n')
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if line:
+                            arch = os.path.basename(line).replace('qemu-system-', '')
+                            if arch:
+                                found_arches.add(arch)
             except:
-                # Fallback: search in common paths
-                qemu_binaries = []
+                pass
+
+            # If that didn't work, search common paths
+            if not found_arches:
                 search_paths = [
                     '/usr/bin',
                     '/usr/local/bin',
@@ -276,30 +285,14 @@ class QEMUCapabilities:
                             if file.startswith('qemu-system-'):
                                 full_path = os.path.join(path, file)
                                 if os.access(full_path, os.X_OK):
-                                    qemu_binaries.append(full_path)
+                                    arch = file.replace('qemu-system-', '')
+                                    if arch:
+                                        found_arches.add(arch)
 
-            # Extract architectures from binary names
-            found_arches = set()
-            for binary in qemu_binaries:
-                arch = os.path.basename(binary).replace('qemu-system-', '')
-                if arch and arch != '*':  # Filter out the wildcard if 'which' didn't expand
-                    found_arches.add(arch)
-
-            # If no architectures found, try another method
+            # If still no architectures found, try direct binary checks
             if not found_arches:
-                # Try to get supported machines which can indicate architecture support
-                try:
-                    result = subprocess.run([version_cmd, '-machine', 'help'],
-                                         capture_output=True, text=True)
-                    if result.returncode == 0:
-                        # At minimum, we know this architecture is supported
-                        arch = version_cmd.replace('qemu-system-', '')
-                        found_arches.add(arch)
-                except:
-                    pass
-
-                # Try some common architectures directly
-                common_arches = ['x86_64', 'aarch64', 'arm', 'riscv64', 'ppc64', 'sparc64']
+                # Common QEMU system emulators
+                common_arches = ['x86_64', 'i386', 'aarch64', 'arm', 'riscv64', 'ppc64', 'sparc64']
                 for arch in common_arches:
                     try:
                         result = subprocess.run([f'qemu-system-{arch}', '--version'],
@@ -311,17 +304,24 @@ class QEMUCapabilities:
 
             self.architectures = sorted(list(found_arches))
 
-            # Check for SPICE support by looking for spice-related options
+            # Check for SPICE support
             try:
+                # First check if spice-server is available in device help
                 help_output = subprocess.run([version_cmd, '-device', 'help'],
-                                          capture_output=True, text=True)
-                self.has_spice = any('spice' in line.lower() for line in help_output.stdout.split('\n'))
+                                         capture_output=True, text=True)
+                self.has_spice = 'spice-' in help_output.stdout.lower()
                 
                 if not self.has_spice:
-                    # Double check with -spice help
+                    # Then check if -spice option is available
                     spice_help = subprocess.run([version_cmd, '-spice', 'help'],
-                                             capture_output=True, text=True)
+                                            capture_output=True, text=True)
                     self.has_spice = spice_help.returncode == 0
+                    
+                if not self.has_spice:
+                    # Finally check if it's in the general help
+                    general_help = subprocess.run([version_cmd, '--help'],
+                                             capture_output=True, text=True)
+                    self.has_spice = '-spice' in general_help.stdout
             except:
                 self.has_spice = False
 
@@ -343,6 +343,7 @@ class QEMUCapabilities:
 
             if not self.architectures:
                 logger.warning("No QEMU architectures detected despite QEMU being available")
+                logger.warning(f"QEMU version command used: {version_cmd}")
 
         except Exception as e:
             self.error = f"Error detecting QEMU capabilities: {str(e)}"
