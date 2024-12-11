@@ -3,10 +3,16 @@
     "name": "donkey",
     "cpu": "qemu64",
     "memory": 1024,
-    "disk_path": "",
+    "disks": [],
     "enable_kvm": false,
     "headless": false,
-    "vnc_port": 1,
+    "display": {
+      "type": "spice",
+      "port": 5001,
+      "websocket_port": 6000,
+      "address": "127.0.0.1",
+      "password": "R55GgKBRruuR"
+    },
     "arch": "x86_64",
     "machine": "q35",
     "additional_args": []

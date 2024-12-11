@@ -7,6 +7,42 @@
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <!-- SPICE Client Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/main.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicearraybuffer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/enums.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/atKeynames.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/png.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/lz.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/quic.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/bitmap.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicedataview.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicetype.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicemsg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/wire.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spiceconn.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/display.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/main.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/inputs.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/simulatecursor.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/cursor.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/jsbn.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/rsa.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/prng4.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/rng.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/ticket.js"></script>
+    <style>
+        .spice-display {
+            width: 100%;
+            height: 100%;
+            background-color: black;
+        }
+        .spice-display canvas {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
 </head>
 <body class="bg-gray-100">
     {% raw %}
@@ -152,6 +188,10 @@
                                     <button @click="deleteVM(selectedVM.name)"
                                             class="bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700">
                                         Delete
+                                    </button>
+                                    <button @click="openDisplay(selectedVM)"
+                                            class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700">
+                                        Open Display
                                     </button>
                                 </div>
                             </div>
@@ -415,6 +455,46 @@
                 </div>
             </div>
         </div>
+
+        <!-- VM Display Modal -->
+        <div v-if="showDisplayModal" class="fixed inset-0 bg-gray-900 bg-opacity-90 overflow-y-auto h-full w-full flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full h-full flex flex-col">
+                <div class="flex justify-between items-center p-4 border-b">
+                    <h2 class="text-2xl font-bold">{{ selectedVM.name }} Display</h2>
+                    <div class="flex items-center space-x-4">
+                        <button @click="toggleFullscreen" class="text-gray-600 hover:text-gray-800">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path v-if="isFullscreen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20H5a2 2 0 01-2-2v-4m0 0l5-5m-5 5h4m5 5v4a2 2 0 01-2 2h-4m0 0l5-5m-5 5v-4"/>
+                                <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                            </svg>
+                        </button>
+                        <button @click="closeDisplay" class="text-gray-600 hover:text-gray-800">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex-1 relative bg-black">
+                    <div id="spice-area" class="absolute inset-0">
+                        <!-- SPICE display will be inserted here -->
+                    </div>
+                </div>
+                <div class="p-4 border-t bg-gray-50 flex justify-between items-center">
+                    <div class="text-sm text-gray-600">
+                        <span v-if="selectedVM.display.type === 'spice'">SPICE Display</span>
+                        <span v-else>VNC Display</span>
+                        <span class="ml-2">Port: {{ selectedVM.display.port }}</span>
+                    </div>
+                    <div class="space-x-2">
+                        <button @click="sendCtrlAltDel" 
+                                class="bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700">
+                            Send Ctrl+Alt+Del
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     {% endraw %}
 
@@ -434,6 +514,13 @@
                     disks: [],
                     enable_kvm: false,
                     headless: false,
+                    display: {
+                        type: 'spice',
+                        port: null,
+                        websocket_port: null,
+                        address: '127.0.0.1',
+                        password: null
+                    },
                     arch: 'x86_64'
                 },
                 vms: [],
@@ -442,13 +529,21 @@
                 socket: null,
                 currentPath: '/',
                 fileList: [],
-                editingDiskIndex: null
+                editingDiskIndex: null,
+                showDisplayModal: false,
+                isFullscreen: false,
+                spiceConnection: null
             },
             mounted() {
                 this.socket = io();
                 this.socket.on('vm_status', this.updateVMStatus);
                 this.socket.on('vm_stopped', this.handleVMStopped);
                 this.fetchVMs();
+                
+                // Listen for fullscreen changes
+                document.addEventListener('fullscreenchange', () => {
+                    this.isFullscreen = !!document.fullscreenElement;
+                });
             },
             methods: {
                 showError(message, duration = 5000) {
@@ -650,6 +745,13 @@
                                 disks: [],
                                 enable_kvm: false,
                                 headless: false,
+                                display: {
+                                    type: 'spice',
+                                    port: null,
+                                    websocket_port: null,
+                                    address: '127.0.0.1',
+                                    password: null
+                                },
                                 arch: 'x86_64'
                             };
                         } else {
@@ -659,7 +761,88 @@
                         console.error('Error creating VM:', error);
                         this.showError(`Failed to create VM: ${error.message}`);
                     }
+                },
+                async openDisplay(vm) {
+                    if (!vm.running) {
+                        this.showError("VM must be running to open display");
+                        return;
+                    }
+
+                    this.showDisplayModal = true;
+                    await this.$nextTick();
+
+                    if (vm.display.type === 'spice') {
+                        this.connectSpice(vm);
+                    }
+                },
+
+                connectSpice(vm) {
+                    const spiceArea = document.getElementById('spice-area');
+                    spiceArea.innerHTML = '';
+
+                    const uri = `ws://${window.location.hostname}:${vm.display.websocket_port}`;
+                    const password = vm.display.password;
+
+                    try {
+                        this.spiceConnection = new SpiceMainConn({
+                            uri: uri,
+                            screen_id: 'spice-area',
+                            password: password,
+                            onerror: (e) => {
+                                console.error('SPICE error:', e);
+                                this.showError(`SPICE connection error: ${e.message || 'Unknown error'}`);
+                            },
+                            onsuccess: () => {
+                                this.showSuccess('SPICE connection established');
+                            }
+                        });
+                    } catch (e) {
+                        console.error('Failed to create SPICE connection:', e);
+                        this.showError(`Failed to create SPICE connection: ${e.message}`);
+                    }
+                },
+
+                closeDisplay() {
+                    if (this.spiceConnection) {
+                        this.spiceConnection.stop();
+                        this.spiceConnection = null;
+                    }
+                    this.showDisplayModal = false;
+                },
+
+                toggleFullscreen() {
+                    const elem = document.getElementById('spice-area');
+                    if (!document.fullscreenElement) {
+                        elem.requestFullscreen().catch(err => {
+                            this.showError(`Error attempting to enable fullscreen: ${err.message}`);
+                        });
+                    } else {
+                        document.exitFullscreen();
+                    }
+                },
+
+                sendCtrlAltDel() {
+                    if (this.spiceConnection) {
+                        this.spiceConnection.sendCtrlAltDel();
+                        this.showSuccess('Sent Ctrl+Alt+Del');
+                    }
+                },
+
+                // Add a button in your VM controls to open display
+                addDisplayButton() {
+                    return `
+                        <button @click="openDisplay(selectedVM)"
+                                class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700">
+                            Open Display
+                        </button>
+                    `;
                 }
+            },
+            beforeDestroy() {
+                if (this.spiceConnection) {
+                    this.spiceConnection.stop();
+                }
+                document.removeEventListener('fullscreenchange');
             }
         });
     </script>

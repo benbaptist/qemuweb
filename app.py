@@ -13,6 +13,7 @@ import threading
 import logging
 import queue
 import socket
+import random
 from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,12 @@ DEFAULT_CONFIG = {
     "vnc": {
         "start_port": 5900,
         "port_range": 200
+    },
+    "spice": {
+        "start_port": 5000,
+        "port_range": 200,
+        "websocket_start_port": 6000,
+        "host": "localhost"
     },
     "qemu": {
         "default_memory": 1024,
@@ -73,6 +80,9 @@ socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
 VM_CONFIG_FILE = 'vm_configs.json'
 VNC_PORT_START = config['vnc']['start_port']
 VNC_PORT_RANGE = config['vnc']['port_range']
+SPICE_PORT_START = config['spice']['start_port']
+SPICE_PORT_RANGE = config['spice']['port_range']
+SPICE_WS_PORT_START = config['spice']['websocket_start_port']
 
 @dataclass
 class DiskDevice:
@@ -101,16 +111,43 @@ class DiskDevice:
             readonly=data.get("readonly", False)
         )
 
+@dataclass
+class DisplayConfig:
+    type: str = "spice"  # "spice" or "vnc"
+    port: Optional[int] = None
+    websocket_port: Optional[int] = None
+    address: str = "127.0.0.1"
+    password: Optional[str] = None
+
+    def to_dict(self):
+        return {
+            "type": self.type,
+            "port": self.port,
+            "websocket_port": self.websocket_port,
+            "address": self.address,
+            "password": self.password
+        }
+
+    @staticmethod
+    def from_dict(data):
+        return DisplayConfig(
+            type=data.get("type", "spice"),
+            port=data.get("port"),
+            websocket_port=data.get("websocket_port"),
+            address=data.get("address", "127.0.0.1"),
+            password=data.get("password")
+        )
+
 @dataclass_json
 @dataclass
 class VMConfig:
     name: str
     cpu: str = config['qemu']['default_cpu']
-    memory: int = config['qemu']['default_memory']  # in MB
+    memory: int = config['qemu']['default_memory']
     disks: List[DiskDevice] = field(default_factory=list)
     enable_kvm: bool = False
     headless: bool = False
-    vnc_port: Optional[int] = None
+    display: DisplayConfig = field(default_factory=lambda: DisplayConfig())
     arch: str = "x86_64"
     machine: str = config['qemu']['default_machine']
     additional_args: List[str] = field(default_factory=list)
@@ -118,24 +155,37 @@ class VMConfig:
     def to_dict(self):
         data = super().to_dict()
         data['disks'] = [disk.to_dict() for disk in self.disks]
+        data['display'] = self.display.to_dict()
         return data
 
     @classmethod
     def from_dict(cls, data):
         if 'disks' in data:
             data['disks'] = [DiskDevice.from_dict(d) for d in data['disks']]
+        if 'display' in data:
+            data['display'] = DisplayConfig.from_dict(data['display'])
+        elif 'vnc_port' in data:  # Handle legacy configs
+            display = DisplayConfig(type="vnc", port=data['vnc_port'])
+            data['display'] = display
+            del data['vnc_port']
         return cls(**data)
 
-def find_free_vnc_port() -> Tuple[bool, int]:
-    """Find a free VNC port starting from VNC_PORT_START"""
-    for port in range(VNC_PORT_START, VNC_PORT_START + VNC_PORT_RANGE):
+def find_free_port(start_port: int, port_range: int) -> Tuple[bool, int]:
+    """Find a free port in the given range."""
+    for port in range(start_port, start_port + port_range):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind(('127.0.0.1', port))
-                return True, port - VNC_PORT_START  # Convert to QEMU VNC display number
+                return True, port
         except socket.error:
             continue
     return False, -1
+
+def generate_random_password(length: int = 12) -> str:
+    """Generate a random password for SPICE authentication."""
+    import string
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))
 
 def list_directory(path: str = "/") -> List[Dict]:
     """List directory contents with file information."""
@@ -170,7 +220,7 @@ class VMManager:
         self.processes: Dict[str, subprocess.Popen] = {}
         self.monitor_threads: Dict[str, threading.Thread] = {}
         self.stop_events: Dict[str, threading.Event] = {}
-        self.vnc_ports: Dict[str, int] = {}
+        self.spice_websocket_processes: Dict[str, subprocess.Popen] = {}
         self.load_vm_configs()
 
     def generate_qemu_command(self, config: VMConfig) -> List[str]:
@@ -202,16 +252,48 @@ class VMManager:
             cmd.extend(["-enable-kvm"])
             
         if not config.headless:
-            if config.vnc_port is None:
-                success, port = find_free_vnc_port()
-                if not success:
-                    raise RuntimeError("No available VNC ports found")
-                config.vnc_port = port
-                self.save_vm_configs()
-            
-            cmd.extend(["-vnc", f":{config.vnc_port}"])
-            self.vnc_ports[config.name] = config.vnc_port
-            logger.info(f"VM {config.name} assigned VNC port {config.vnc_port} (TCP port {VNC_PORT_START + config.vnc_port})")
+            if config.display.type == "spice":
+                if config.display.port is None:
+                    success, port = find_free_port(SPICE_PORT_START, SPICE_PORT_RANGE)
+                    if not success:
+                        raise RuntimeError("No available SPICE ports found")
+                    config.display.port = port
+                    
+                    # Also allocate a WebSocket port
+                    success, ws_port = find_free_port(SPICE_WS_PORT_START, SPICE_PORT_RANGE)
+                    if not success:
+                        raise RuntimeError("No available WebSocket ports found")
+                    config.display.websocket_port = ws_port
+                    
+                    if not config.display.password:
+                        config.display.password = generate_random_password()
+                    
+                    self.save_vm_configs()
+
+                cmd.extend([
+                    "-spice", 
+                    f"port={config.display.port},addr={config.display.address}"
+                    f",password={config.display.password}"
+                ])
+                
+                # Add SPICE agent and GL acceleration
+                cmd.extend([
+                    "-device", "virtio-serial-pci",
+                    "-device", "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0",
+                    "-chardev", "spicevmc,id=spicechannel0,name=vdagent",
+                    "-device", "qxl-vga,vgamem_mb=64",
+                    "-device", "virtio-tablet-pci",
+                    "-device", "virtio-keyboard-pci"
+                ])
+            else:  # VNC
+                if config.display.port is None:
+                    success, port = find_free_port(VNC_PORT_START, VNC_PORT_RANGE)
+                    if not success:
+                        raise RuntimeError("No available VNC ports found")
+                    config.display.port = port
+                    self.save_vm_configs()
+                
+                cmd.extend(["-vnc", f":{config.display.port - VNC_PORT_START}"])
         else:
             cmd.extend(["-nographic"])
             
@@ -219,7 +301,33 @@ class VMManager:
             cmd.extend(config.additional_args)
             
         return cmd
-    
+
+    def start_spice_websocket_proxy(self, vm_name: str, config: VMConfig) -> bool:
+        """Start WebSocket proxy for SPICE."""
+        try:
+            if not config.display.websocket_port or not config.display.port:
+                logger.error(f"Missing WebSocket or SPICE port configuration for VM {vm_name}")
+                return False
+
+            proxy_cmd = [
+                "websockify",
+                str(config.display.websocket_port),
+                f"{config.display.address}:{config.display.port}"
+            ]
+            
+            process = subprocess.Popen(
+                proxy_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            self.spice_websocket_processes[vm_name] = process
+            logger.info(f"Started SPICE WebSocket proxy for VM {vm_name} on port {config.display.websocket_port}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start SPICE WebSocket proxy for VM {vm_name}: {str(e)}")
+            return False
+
     def load_vm_configs(self):
         try:
             if os.path.exists(VM_CONFIG_FILE):
@@ -247,7 +355,7 @@ class VMManager:
     def add_vm(self, config: VMConfig) -> bool:
         try:
             # Clear any previously assigned VNC port
-            config.vnc_port = None
+            config.display.port = None
             self.vms[config.name] = config
             self.save_vm_configs()
             return True
@@ -269,7 +377,7 @@ class VMManager:
                 # Remove from all dictionaries
                 self.stop_events.pop(name, None)
                 self.monitor_threads.pop(name, None)
-                self.vnc_ports.pop(name, None)
+                self.spice_websocket_processes.pop(name, None)
                 del self.vms[name]
                 self.save_vm_configs()
                 return True
@@ -307,6 +415,12 @@ class VMManager:
             
             self.processes[name] = process
             
+            # Start SPICE WebSocket proxy if needed
+            if not config.headless and config.display.type == "spice":
+                if not self.start_spice_websocket_proxy(name, config):
+                    process.terminate()
+                    return False, "Failed to start SPICE WebSocket proxy"
+            
             # Create a new stop event for this VM
             self.stop_events[name] = threading.Event()
             
@@ -335,7 +449,14 @@ class VMManager:
                 if process.poll() is not None:
                     logger.info(f"VM {vm_name} has stopped with return code {process.returncode}")
                     self.processes.pop(vm_name, None)
-                    self.vnc_ports.pop(vm_name, None)  # Release the VNC port
+                    if vm_name in self.spice_websocket_processes:
+                        try:
+                            self.spice_websocket_processes[vm_name].terminate()
+                            self.spice_websocket_processes[vm_name].wait(timeout=5)
+                        except:
+                            self.spice_websocket_processes[vm_name].kill()
+                        finally:
+                            self.spice_websocket_processes.pop(vm_name, None)
                     # Use eventlet's spawn to safely emit the event
                     eventlet.spawn(self._emit_vm_stopped, vm_name)
                     break
@@ -350,7 +471,7 @@ class VMManager:
                         'memory_mb': mem_info.rss / (1024 * 1024),
                         'running': True,
                         'config': self.vms[vm_name].to_dict(),
-                        'vnc_port': self.vnc_ports.get(vm_name)
+                        'display': self.vms[vm_name].display.to_dict() if not self.vms[vm_name].headless else None
                     }
                     
                     # Use eventlet's spawn to safely emit the event
@@ -381,6 +502,16 @@ class VMManager:
         process = self.processes.get(name)
         if process:
             try:
+                # Stop SPICE WebSocket proxy if running
+                if name in self.spice_websocket_processes:
+                    try:
+                        self.spice_websocket_processes[name].terminate()
+                        self.spice_websocket_processes[name].wait(timeout=5)
+                    except:
+                        self.spice_websocket_processes[name].kill()
+                    finally:
+                        self.spice_websocket_processes.pop(name, None)
+                
                 # Set the stop event first
                 if name in self.stop_events:
                     self.stop_events[name].set()
@@ -390,7 +521,6 @@ class VMManager:
                 
                 # Clean up
                 self.processes.pop(name, None)
-                self.vnc_ports.pop(name, None)  # Release the VNC port
                 if name in self.monitor_threads:
                     self.monitor_threads[name].join(timeout=5)
                 self.monitor_threads.pop(name, None)
@@ -405,7 +535,7 @@ class VMManager:
                 return False
         return False
 
-    def get_vm_status(self, name: str) -> dict:
+    def get_vm_status(self, name: str) -> Optional[dict]:
         if name not in self.vms:
             return None
             
@@ -416,7 +546,7 @@ class VMManager:
             'name': name,
             'config': config.to_dict(),
             'running': False,
-            'vnc_port': self.vnc_ports.get(name)
+            'display': config.display.to_dict() if not config.headless else None
         }
         
         if process:
@@ -484,6 +614,10 @@ def stop_vm(name):
 @app.route('/api/vms/<name>/status', methods=['GET'])
 def get_vm_status(name):
     status = vm_manager.get_vm_status(name)
+    if status:
+        config = vm_manager.vms.get(name)
+        if config and not config.headless:
+            status['display'] = config.display.to_dict()
     return jsonify(status)
 
 @app.route('/api/browse', methods=['GET'])
