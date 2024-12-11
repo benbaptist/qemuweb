@@ -1,0 +1,14 @@
+{
+  "donkey": {
+    "name": "donkey",
+    "cpu": "qemu64",
+    "memory": 1024,
+    "disk_path": "",
+    "enable_kvm": false,
+    "headless": false,
+    "vnc_port": 1,
+    "arch": "x86_64",
+    "machine": "q35",
+    "additional_args": []
+  }
+}

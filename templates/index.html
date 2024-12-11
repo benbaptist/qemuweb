@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QEMU Web Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+</head>
+<body class="bg-gray-100">
+    {% raw %}
+    <div id="app" class="min-h-screen">
+        <!-- Create VM Modal -->
+        <div v-if="showCreateModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">Create New VM</h2>
+                    <button @click="showCreateModal = false" class="text-gray-600 hover:text-gray-800">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                
+                <form @submit.prevent="createVM" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Name</label>
+                        <input v-model="newVM.name" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">CPU</label>
+                        <input v-model="newVM.cpu" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
+                        <input v-model.number="newVM.memory" type="number" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Disk Path</label>
+                        <input v-model="newVM.disk_path" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Architecture</label>
+                        <select v-model="newVM.arch" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option value="x86_64">x86_64</option>
+                            <option value="aarch64">aarch64</option>
+                            <option value="arm">arm</option>
+                            <option value="riscv64">riscv64</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center">
+                        <input v-model="newVM.enable_kvm" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                        <label class="ml-2 block text-sm text-gray-700">Enable KVM</label>
+                    </div>
+                    <div class="flex items-center">
+                        <input v-model="newVM.headless" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                        <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                    </div>
+                    <div class="flex justify-end space-x-3 mt-6">
+                        <button type="button" @click="showCreateModal = false" class="bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300">
+                            Cancel
+                        </button>
+                        <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+                            Create VM
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Main Layout -->
+        <div class="flex h-screen">
+            <!-- Sidebar -->
+            <div class="w-80 bg-white border-r border-gray-200 flex flex-col">
+                <div class="p-4 border-b border-gray-200">
+                    <button @click="showCreateModal = true" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+                        Create New VM
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto p-4">
+                    <div v-for="vm in vms" :key="vm.name" 
+                         @click="selectVM(vm)"
+                         class="p-4 mb-2 rounded-lg cursor-pointer transition-colors"
+                         :class="[selectedVM && selectedVM.name === vm.name ? 'bg-indigo-50 border-indigo-500' : 'hover:bg-gray-50', 'border']">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-medium">{{ vm.name }}</h3>
+                            <span :class="vm.running ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'" 
+                                  class="px-2 py-1 rounded-full text-xs font-medium">
+                                {{ vm.running ? 'Running' : 'Stopped' }}
+                            </span>
+                        </div>
+                        <p class="text-sm text-gray-500 mt-1">{{ vm.config.arch }} - {{ vm.config.memory }}MB</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="flex-1 flex flex-col">
+                <header class="bg-white border-b border-gray-200 p-4">
+                    <h1 class="text-2xl font-bold text-gray-800">QEMU Web Manager</h1>
+                </header>
+
+                <main class="flex-1 p-6 overflow-y-auto">
+                    <div v-if="selectedVM" class="space-y-6">
+                        <!-- VM Controls -->
+                        <div class="bg-white p-6 rounded-lg shadow-md">
+                            <div class="flex justify-between items-center mb-4">
+                                <h2 class="text-xl font-semibold">{{ selectedVM.name }}</h2>
+                                <div class="space-x-2">
+                                    <button v-if="!selectedVM.running"
+                                            @click="startVM(selectedVM.name)"
+                                            class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
+                                        Start
+                                    </button>
+                                    <button v-if="selectedVM.running"
+                                            @click="stopVM(selectedVM.name)"
+                                            class="bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700">
+                                        Stop
+                                    </button>
+                                    <button @click="deleteVM(selectedVM.name)"
+                                            class="bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700">
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- VM Status -->
+                            <div v-if="selectedVM.running" class="grid grid-cols-2 gap-4 mb-4">
+                                <div class="bg-gray-50 p-4 rounded-lg">
+                                    <h3 class="text-sm font-medium text-gray-500">CPU Usage</h3>
+                                    <p class="mt-1 text-2xl font-semibold">{{ selectedVM.cpu_percent }}%</p>
+                                </div>
+                                <div class="bg-gray-50 p-4 rounded-lg">
+                                    <h3 class="text-sm font-medium text-gray-500">Memory Usage</h3>
+                                    <p class="mt-1 text-2xl font-semibold">{{ Math.round(selectedVM.memory_mb) }} MB</p>
+                                </div>
+                            </div>
+
+                            <!-- VM Configuration -->
+                            <div class="mt-6">
+                                <h3 class="text-lg font-medium mb-4">Configuration</h3>
+                                <dl class="grid grid-cols-2 gap-4">
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">Architecture</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.arch }}</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">CPU Model</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.cpu }}</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">Memory</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.memory }} MB</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">Disk Path</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.disk_path }}</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">KVM Enabled</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.enable_kvm ? 'Yes' : 'No' }}</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">Headless Mode</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.headless ? 'Yes' : 'No' }}</dd>
+                                    </div>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="flex items-center justify-center h-full text-gray-500">
+                        Select a VM from the sidebar to view details
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+    {% endraw %}
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                showCreateModal: false,
+                newVM: {
+                    name: '',
+                    cpu: 'qemu64',
+                    memory: 1024,
+                    disk_path: '',
+                    enable_kvm: false,
+                    headless: false,
+                    arch: 'x86_64'
+                },
+                vms: [],
+                selectedVM: null,
+                socket: null
+            },
+            mounted() {
+                this.socket = io();
+                this.socket.on('vm_status', this.updateVMStatus);
+                this.socket.on('vm_stopped', this.handleVMStopped);
+                this.fetchVMs();
+            },
+            methods: {
+                async fetchVMs() {
+                    try {
+                        const response = await fetch('/api/vms');
+                        this.vms = await response.json();
+                        if (this.selectedVM) {
+                            this.selectedVM = this.vms.find(vm => vm.name === this.selectedVM.name) || null;
+                        }
+                    } catch (error) {
+                        console.error('Error fetching VMs:', error);
+                    }
+                },
+                selectVM(vm) {
+                    this.selectedVM = vm;
+                },
+                async createVM() {
+                    try {
+                        const response = await fetch('/api/vms', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(this.newVM)
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showCreateModal = false;
+                            await this.fetchVMs();
+                            // Reset form
+                            this.newVM = {
+                                name: '',
+                                cpu: 'qemu64',
+                                memory: 1024,
+                                disk_path: '',
+                                enable_kvm: false,
+                                headless: false,
+                                arch: 'x86_64'
+                            };
+                        }
+                    } catch (error) {
+                        console.error('Error creating VM:', error);
+                    }
+                },
+                async startVM(name) {
+                    try {
+                        const response = await fetch(`/api/vms/${name}/start`, {
+                            method: 'POST'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            await this.fetchVMs();
+                        }
+                    } catch (error) {
+                        console.error('Error starting VM:', error);
+                    }
+                },
+                async stopVM(name) {
+                    try {
+                        const response = await fetch(`/api/vms/${name}/stop`, {
+                            method: 'POST'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            await this.fetchVMs();
+                        }
+                    } catch (error) {
+                        console.error('Error stopping VM:', error);
+                    }
+                },
+                async deleteVM(name) {
+                    if (!confirm(`Are you sure you want to delete VM "${name}"?`)) {
+                        return;
+                    }
+                    try {
+                        const response = await fetch(`/api/vms/${name}`, {
+                            method: 'DELETE'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            if (this.selectedVM && this.selectedVM.name === name) {
+                                this.selectedVM = null;
+                            }
+                            await this.fetchVMs();
+                        }
+                    } catch (error) {
+                        console.error('Error deleting VM:', error);
+                    }
+                },
+                updateVMStatus(status) {
+                    const index = this.vms.findIndex(vm => vm.name === status.name);
+                    if (index !== -1) {
+                        this.vms.splice(index, 1, status);
+                        if (this.selectedVM && this.selectedVM.name === status.name) {
+                            this.selectedVM = status;
+                        }
+                    } else {
+                        this.vms.push(status);
+                    }
+                },
+                handleVMStopped(data) {
+                    this.fetchVMs();
+                }
+            }
+        });
+    </script>
+</body>
+</html> 
