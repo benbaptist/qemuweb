@@ -9,31 +9,8 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
     <!-- SPICE Client Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/main.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicearraybuffer.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/enums.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/atKeynames.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/png.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/lz.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/quic.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/bitmap.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicedataview.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicetype.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spicemsg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/wire.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/spiceconn.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/display.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/main.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/inputs.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/simulatecursor.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/cursor.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/jsbn.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/rsa.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/prng4.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/rng.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/ticket.js"></script>
-    <!-- noVNC Core Dependencies -->
-    <script src="https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/dist/novnc.min.js"></script>
+    <!-- Local noVNC bundle -->
+    <script src="/novnc-bundle.js"></script>
     <style>
         .spice-display, .vnc-display {
             width: 100%;
@@ -967,8 +944,8 @@
 
                 connectVNC(vm) {
                     try {
-                        if (!window.novnc || !window.novnc.RFB) {
-                            throw new Error("noVNC library not loaded properly");
+                        if (!window.RFB) {
+                            throw new Error("noVNC RFB constructor not available");
                         }
 
                         // Calculate the websocket URL
@@ -979,7 +956,7 @@
                         console.log('Connecting to VNC at:', wsUrl);
 
                         // Initialize noVNC
-                        this.vncConnection = new window.novnc.RFB(
+                        this.vncConnection = new window.RFB(
                             document.getElementById('display-area'),
                             wsUrl,
                             {
@@ -995,33 +972,28 @@
                             }
                         );
 
-                        this.vncConnection.addEventListener('connect', () => {
+                        // Add event listeners
+                        document.getElementById('display-area').addEventListener('connect', () => {
                             console.log('VNC connected');
                             this.showSuccess('VNC connection established');
                         });
 
-                        this.vncConnection.addEventListener('disconnect', (e) => {
+                        document.getElementById('display-area').addEventListener('disconnect', (e) => {
                             console.log('VNC disconnected:', e);
                             this.showError(`VNC disconnected: ${e.detail?.reason || 'Unknown reason'}`);
                         });
 
-                        this.vncConnection.addEventListener('securityfailure', (e) => {
-                            console.log('VNC security error:', e);
-                            this.showError(`VNC security error: ${e.detail?.reason || 'Authentication failed'}`);
+                        document.getElementById('display-area').addEventListener('error', (e) => {
+                            console.log('VNC error:', e);
+                            this.showError(`VNC error: ${e.detail?.message || 'Unknown error'}`);
                         });
 
                         // Handle canvas resize
                         const resizeObserver = new ResizeObserver(() => {
-                            if (this.vncConnection && this.vncConnection._fbWidth > 0) {
+                            if (this.vncConnection) {
                                 const container = document.getElementById('display-area');
-                                const scale = Math.min(
-                                    container.clientWidth / this.vncConnection._fbWidth,
-                                    container.clientHeight / this.vncConnection._fbHeight
-                                );
-                                if (scale > 0) {
-                                    this.vncConnection.scaleViewport = true;
-                                    this.vncConnection.scaleFactor = scale;
-                                }
+                                this.vncConnection.scaleViewport = true;
+                                this.vncConnection.scaleFactor = 1.0; // Auto-scale
                             }
                         });
                         resizeObserver.observe(document.getElementById('display-area'));

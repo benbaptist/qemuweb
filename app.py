@@ -1,7 +1,7 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, jsonify, request, send_from_directory
+from flask import Flask, render_template, jsonify, request, send_from_directory, Response
 from flask_socketio import SocketIO, emit
 from dataclasses import dataclass, field
 from dataclasses_json import dataclass_json
@@ -74,9 +74,9 @@ file_handler = logging.FileHandler(app_log_file)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
-app = Flask(__name__)
+app = Flask(__name__, static_url_path='/static', static_folder='static')
 app.config['SECRET_KEY'] = os.urandom(24)
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
+socketio = SocketIO(app)
 
 VM_CONFIG_FILE = 'vm_configs.json'
 VNC_PORT_START = config['vnc']['start_port']
@@ -834,6 +834,33 @@ def handle_disconnect():
 @app.route('/api/qemu/capabilities', methods=['GET'])
 def get_qemu_capabilities():
     return jsonify(qemu_caps.to_dict())
+
+@app.route('/novnc-bundle.js')
+def novnc_bundle():
+    novnc_dir = os.path.join(app.static_folder, 'novnc')
+    files = {
+        'browser.js': os.path.join(novnc_dir, 'browser.js'),
+        'logging.js': os.path.join(novnc_dir, 'logging.js'),
+        'events.js': os.path.join(novnc_dir, 'events.js'),
+        'base64.js': os.path.join(novnc_dir, 'base64.js'),
+        'websock.js': os.path.join(novnc_dir, 'websock.js'),
+        'rfb.js': os.path.join(novnc_dir, 'rfb.js')
+    }
+    
+    # Read all files
+    file_contents = {}
+    for name, path in files.items():
+        with open(path, 'r') as f:
+            file_contents[name] = f.read()
+    
+    # Render the bundle template
+    with open(os.path.join(novnc_dir, 'novnc-bundle.js'), 'r') as f:
+        template = f.read()
+        
+    for name, content in file_contents.items():
+        template = template.replace(f"{{% include '{name}' %}}", content)
+    
+    return Response(template, mimetype='application/javascript')
 
 if __name__ == '__main__':
     logger.info(f"Starting web interface on {config['web_interface']['host']}:{config['web_interface']['port']}")
