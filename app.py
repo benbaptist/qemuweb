@@ -257,16 +257,14 @@ class QEMUCapabilities:
             # Get list of all available QEMU system emulators
             found_arches = set()
             
-            # First try using command output
+            # Try using glob to find QEMU binaries
             try:
-                result = subprocess.run(['ls', '-1', '/usr/bin/qemu-system-*'], 
-                                     capture_output=True, text=True, shell=True)
-                if result.returncode == 0:
-                    for line in result.stdout.strip().split('\n'):
-                        if line:
-                            arch = os.path.basename(line).replace('qemu-system-', '')
-                            if arch:
-                                found_arches.add(arch)
+                import glob
+                qemu_binaries = glob.glob('/usr/bin/qemu-system-*')
+                for binary in qemu_binaries:
+                    arch = os.path.basename(binary).replace('qemu-system-', '')
+                    if arch and os.access(binary, os.X_OK):
+                        found_arches.add(arch)
             except:
                 pass
 
