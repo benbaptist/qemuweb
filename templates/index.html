@@ -398,27 +398,62 @@
                 </div>
                 
                 <form @submit.prevent="saveVM" class="space-y-6">
-                    <!-- Basic Settings -->
+                    <!-- Basic Settings in Edit VM form -->
                     <div class="grid grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">CPU Model</label>
-                            <input v-model="editingVM.cpu" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
-                            <input v-model.number="editingVM.memory" type="number" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                        </div>
+                        <!-- Architecture -->
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Architecture</label>
-                            <select v-model="editingVM.arch" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <select v-model="editingVM.arch" 
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                                 <option v-for="arch in updateArchitectureOptions()" 
                                         :key="arch" 
                                         :value="arch">{{ arch }}</option>
                             </select>
                         </div>
+
+                        <!-- Memory -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
+                            <input v-model.number="editingVM.memory" type="number" 
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+
+                        <!-- CPU Model -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Model</label>
+                            <div class="mt-1 flex space-x-2">
+                                <select v-model="editingVM.cpu" 
+                                        class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="">Custom...</option>
+                                    <option v-for="model in getCPUModels(editingVM.arch)" 
+                                            :key="model" 
+                                            :value="model">{{ model }}</option>
+                                </select>
+                                <input v-if="shouldShowCustomCPUInput(editingVM.cpu, editingVM.arch)"
+                                       v-model="editingVM.cpu" 
+                                       type="text"
+                                       placeholder="Custom CPU model"
+                                       class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+
+                        <!-- Machine Type -->
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Machine Type</label>
-                            <input v-model="editingVM.machine" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <div class="mt-1 flex space-x-2">
+                                <select v-model="editingVM.machine" 
+                                        class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="">Custom...</option>
+                                    <option v-for="type in getMachineTypes(editingVM.arch)" 
+                                            :key="type" 
+                                            :value="type">{{ type }}</option>
+                                </select>
+                                <input v-if="!getMachineTypes(editingVM.arch).includes(editingVM.machine)"
+                                       v-model="editingVM.machine" 
+                                       type="text"
+                                       placeholder="Custom machine type"
+                                       class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
                         </div>
                     </div>
 
@@ -699,6 +734,11 @@
                     this.isFullscreen = !!document.fullscreenElement;
                 });
             },
+            created() {
+                // Debounced versions of the getter methods
+                this.debouncedGetCPUModels = this.debounce(this._getCPUModels, 300);
+                this.debouncedGetMachineTypes = this.debounce(this._getMachineTypes, 300);
+            },
             methods: {
                 showError(message, duration = 5000) {
                     this.errorMessage = message;
@@ -962,9 +1002,12 @@
                     try {
                         const response = await fetch('/api/qemu/capabilities');
                         this.qemuCapabilities = await response.json();
+                        console.log('Received QEMU capabilities:', this.qemuCapabilities);
+                        console.log('CPU Models:', this.qemuCapabilities.cpu_models);
+                        console.log('Machine Types:', this.qemuCapabilities.machine_types);
                         
                         if (!this.qemuCapabilities.available) {
-                            this.showError(`QEMU is not available: ${this.qemuCapabilities.error}`, 0);  // 0 means don't auto-dismiss
+                            this.showError(`QEMU is not available: ${this.qemuCapabilities.error}`, 0);
                         }
                     } catch (error) {
                         console.error('Error fetching QEMU capabilities:', error);
@@ -1184,6 +1227,39 @@
                     if (this.logRefreshInterval) {
                         clearInterval(this.logRefreshInterval);
                     }
+                },
+
+                _getCPUModels(arch) {
+                    console.log(`Attempting to get CPU models for ${arch}`);
+                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
+                },
+
+                getCPUModels(arch) {
+                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
+                },
+
+                _getMachineTypes(arch) {
+                    console.log(`Attempting to get machine types for ${arch}`);
+                    return this.qemuCapabilities?.machine_types?.[arch] || [];
+                },
+
+                getMachineTypes(arch) {
+                    return this.qemuCapabilities?.machine_types?.[arch] || [];
+                },
+
+                debounce(fn, delay) {
+                    let timeoutID = null;
+                    return function (...args) {
+                        clearTimeout(timeoutID);
+                        timeoutID = setTimeout(() => {
+                            fn.apply(this, args);
+                        }, delay);
+                    };
+                },
+
+                shouldShowCustomCPUInput(cpu, arch) {
+                    const models = this.qemuCapabilities?.cpu_models?.[arch] || [];
+                    return !models.includes(cpu) && cpu !== '';
                 }
             },
             watch: {
@@ -1196,6 +1272,18 @@
                         this.logRefreshInterval = setInterval(() => {
                             this.fetchVMLogs(this.selectedVM.name);
                         }, 5000);
+                    }
+                },
+                'editingVM.arch': function(newArch) {
+                    const cpuModels = this.getCPUModels(newArch);
+                    const machineTypes = this.getMachineTypes(newArch);
+                    
+                    // Only update if we have models/types and current values aren't valid
+                    if (cpuModels.length > 0 && !cpuModels.includes(this.editingVM.cpu)) {
+                        this.editingVM.cpu = cpuModels[0] || 'qemu64';
+                    }
+                    if (machineTypes.length > 0 && !machineTypes.includes(this.editingVM.machine)) {
+                        this.editingVM.machine = machineTypes[0] || 'q35';
                     }
                 }
             }

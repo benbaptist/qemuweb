@@ -65,14 +65,22 @@ LOG_DIR = 'vm_logs'
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure root logger
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# Add a file handler for the main application log
+# Get our logger
+logger = logging.getLogger(__name__)
+logger.handlers = []  # Remove any existing handlers
+
+# Add file handler
 app_log_file = os.path.join(LOG_DIR, 'app.log')
 file_handler = logging.FileHandler(app_log_file)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
+
+# Add this line to force debug output for subprocess calls
+logger.debug("Subprocess debug enabled")
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
 app.config['SECRET_KEY'] = os.urandom(24)
@@ -223,6 +231,8 @@ def check_websockify_available():
         return False
 
 class QEMUCapabilities:
+    CACHE_FILE = 'qemu_capabilities.json'
+    
     def __init__(self):
         self.available = False
         self.architectures = []
@@ -230,122 +240,192 @@ class QEMUCapabilities:
         self.has_kvm = False
         self.version = None
         self.error = None
-        self.detect_capabilities()
+        self.cpu_models = {}
+        self.machine_types = {}
+        
+        # Try to load from cache first
+        if self.load_cache():
+            logger.info("Loaded QEMU capabilities from cache")
+        else:
+            logger.info("Detecting QEMU capabilities...")
+            self.detect_capabilities()
+            self.save_cache()
+
+    def load_cache(self) -> bool:
+        """Load capabilities from cache file if valid."""
+        try:
+            if os.path.exists(self.CACHE_FILE):
+                with open(self.CACHE_FILE, 'r') as f:
+                    cache = json.load(f)
+                
+                # Verify QEMU version matches
+                current_version = self._get_qemu_version()
+                if current_version and current_version == cache.get('version'):
+                    # Verify architectures match
+                    current_arches = self._detect_architectures()
+                    if set(current_arches) == set(cache.get('architectures', [])):
+                        # Cache is valid, load all data
+                        self.available = cache['available']
+                        self.architectures = cache['architectures']
+                        self.has_spice = cache['has_spice']
+                        self.has_kvm = cache['has_kvm']
+                        self.version = cache['version']
+                        self.cpu_models = cache['cpu_models']
+                        self.machine_types = cache['machine_types']
+                        return True
+                    else:
+                        logger.info("Architectures changed, cache invalid")
+                else:
+                    logger.info("QEMU version changed, cache invalid")
+            return False
+        except Exception as e:
+            logger.error(f"Error loading capabilities cache: {str(e)}")
+            return False
+
+    def save_cache(self):
+        """Save current capabilities to cache file."""
+        try:
+            cache = {
+                'available': self.available,
+                'architectures': self.architectures,
+                'has_spice': self.has_spice,
+                'has_kvm': self.has_kvm,
+                'version': self.version,
+                'cpu_models': self.cpu_models,
+                'machine_types': self.machine_types
+            }
+            with open(self.CACHE_FILE, 'w') as f:
+                json.dump(cache, f, indent=2)
+            logger.info("Saved QEMU capabilities to cache")
+        except Exception as e:
+            logger.error(f"Error saving capabilities cache: {str(e)}")
+
+    def _get_qemu_version(self) -> Optional[str]:
+        """Get QEMU version string."""
+        try:
+            for arch in ['x86_64', 'aarch64', 'arm']:
+                result = subprocess.run([f'qemu-system-{arch}', '--version'], 
+                                     capture_output=True, text=True)
+                if result.returncode == 0:
+                    return result.stdout.split('\n')[0]
+        except:
+            pass
+        return None
 
     def detect_capabilities(self):
-        """Detect QEMU capabilities and available architectures."""
+        """Detect all QEMU capabilities and populate data."""
         try:
-            # First try to get version from any available QEMU binary
-            version_cmd = None
-            for arch in ['x86_64', 'aarch64', 'arm']:
-                try:
-                    result = subprocess.run([f'qemu-system-{arch}', '--version'], 
-                                         capture_output=True, text=True)
-                    if result.returncode == 0:
-                        self.version = result.stdout.split('\n')[0]
-                        version_cmd = f'qemu-system-{arch}'
-                        break
-                except FileNotFoundError:
-                    continue
-
-            if not version_cmd:
+            self.version = self._get_qemu_version()
+            if not self.version:
                 self.error = "No QEMU system emulators found"
                 return
 
             self.available = True
-
-            # Get list of all available QEMU system emulators
-            found_arches = set()
+            self.architectures = self._detect_architectures()
             
-            # Try using glob to find QEMU binaries
-            try:
-                import glob
-                qemu_binaries = glob.glob('/usr/bin/qemu-system-*')
-                for binary in qemu_binaries:
-                    arch = os.path.basename(binary).replace('qemu-system-', '')
-                    if arch and os.access(binary, os.X_OK):
-                        found_arches.add(arch)
-            except:
-                pass
+            # Detect capabilities for all architectures
+            logger.info("Detecting capabilities for all architectures...")
+            for arch in self.architectures:
+                logger.info(f"Processing {arch}...")
+                self.cpu_models[arch] = self.get_cpu_models(arch)
+                self.machine_types[arch] = self.get_machine_types(arch)
+                logger.info(f"Found {len(self.cpu_models[arch])} CPU models and "
+                          f"{len(self.machine_types[arch])} machine types for {arch}")
 
-            # If that didn't work, search common paths
-            if not found_arches:
-                search_paths = [
-                    '/usr/bin',
-                    '/usr/local/bin',
-                    '/opt/homebrew/bin',
-                    '/usr/local/opt/qemu/bin'
-                ] + os.environ.get('PATH', '').split(os.pathsep)
-
-                for path in search_paths:
-                    if os.path.exists(path):
-                        for file in os.listdir(path):
-                            if file.startswith('qemu-system-'):
-                                full_path = os.path.join(path, file)
-                                if os.access(full_path, os.X_OK):
-                                    arch = file.replace('qemu-system-', '')
-                                    if arch:
-                                        found_arches.add(arch)
-
-            # If still no architectures found, try direct binary checks
-            if not found_arches:
-                # Common QEMU system emulators
-                common_arches = ['x86_64', 'i386', 'aarch64', 'arm', 'riscv64', 'ppc64', 'sparc64']
-                for arch in common_arches:
-                    try:
-                        result = subprocess.run([f'qemu-system-{arch}', '--version'],
-                                             capture_output=True, text=True)
-                        if result.returncode == 0:
-                            found_arches.add(arch)
-                    except FileNotFoundError:
-                        continue
-
-            self.architectures = sorted(list(found_arches))
-
-            # Check for SPICE support
-            try:
-                # First check if spice-server is available in device help
-                help_output = subprocess.run([version_cmd, '-device', 'help'],
-                                         capture_output=True, text=True)
-                self.has_spice = 'spice-' in help_output.stdout.lower()
-                
-                if not self.has_spice:
-                    # Then check if -spice option is available
-                    spice_help = subprocess.run([version_cmd, '-spice', 'help'],
-                                            capture_output=True, text=True)
-                    self.has_spice = spice_help.returncode == 0
-                    
-                if not self.has_spice:
-                    # Finally check if it's in the general help
-                    general_help = subprocess.run([version_cmd, '--help'],
-                                             capture_output=True, text=True)
-                    self.has_spice = '-spice' in general_help.stdout
-            except:
-                self.has_spice = False
-
-            # Check for KVM support
-            try:
-                kvm_output = subprocess.run([version_cmd, '-accel', 'help'],
-                                         capture_output=True, text=True)
-                self.has_kvm = 'kvm' in kvm_output.stdout.lower()
-
-                # Additional check for KVM on Linux
-                if os.path.exists('/dev/kvm'):
-                    try:
-                        os.access('/dev/kvm', os.R_OK | os.W_OK)
-                        self.has_kvm = True
-                    except:
-                        pass
-            except:
-                self.has_kvm = False
-
-            if not self.architectures:
-                logger.warning("No QEMU architectures detected despite QEMU being available")
-                logger.warning(f"QEMU version command used: {version_cmd}")
+            # Detect SPICE and KVM support
+            self._detect_spice_support()
+            self._detect_kvm_support()
 
         except Exception as e:
             self.error = f"Error detecting QEMU capabilities: {str(e)}"
-            logger.error(f"QEMU capability detection error: {str(e)}", exc_info=True)
+            logger.error(self.error, exc_info=True)
+
+    def get_cpu_models(self, arch: str) -> List[str]:
+        """Get available CPU models for the specified architecture."""
+        if arch not in self.cpu_models:
+            try:
+                cmd = [f'qemu-system-{arch}', '-cpu', 'help']
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    models = []
+                    for line in result.stdout.split('\n'):
+                        if arch in ['x86_64', 'i386']:
+                            # Look for lines containing x86 CPU model names
+                            if "x86 " in line and "'" in line:
+                                try:
+                                    model = line.split("'")[1].strip()
+                                    if model:
+                                        models.append(model)
+                                except IndexError:
+                                    continue
+                        else:
+                            # For non-x86 architectures
+                            parts = line.strip().split(' ')
+                            if parts and not any(x in parts[0] for x in ['Available', 'Recognized', 'x86']):
+                                models.append(parts[0])
+                
+                    self.cpu_models[arch] = models
+                    logger.debug(f"Found {len(models)} CPU models for {arch}")
+                else:
+                    logger.warning(f"CPU model detection failed for {arch}")
+                    self.cpu_models[arch] = []
+            except Exception as e:
+                logger.error(f"Error detecting CPU models for {arch}: {str(e)}")
+                self.cpu_models[arch] = []
+        
+        return self.cpu_models[arch]
+
+    def get_machine_types(self, arch: str) -> List[str]:
+        """Get available machine types for the specified architecture."""
+        logger.debug(f"=== Getting machine types for {arch} ===")
+        
+        # Try direct command first
+        try:
+            cmd = f"qemu-system-{arch} -machine help"
+            logger.debug(f"Running direct command: {cmd}")
+            process = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            stdout, stderr = process.communicate()
+            logger.debug(f"Direct command stdout:\n{stdout}")
+            logger.debug(f"Direct command stderr:\n{stderr}")
+            logger.debug(f"Direct command return code: {process.returncode}")
+        except Exception as e:
+            logger.debug(f"Direct command failed: {str(e)}")
+
+        if arch not in self.machine_types:
+            try:
+                cmd = [f'qemu-system-{arch}', '-machine', 'help']
+                logger.debug(f"Running command: {' '.join(cmd)}")
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    types = []
+                    for line in result.stdout.split('\n'):
+                        if line.strip() and not line.startswith('Supported'):
+                            try:
+                                machine = line.split(' ')[0].strip()
+                                if machine and not machine.startswith('Type'):
+                                    types.append(machine)
+                                    logger.debug(f"Found machine type: {machine}")
+                            except Exception as e:
+                                logger.debug(f"Failed to parse line: {line}, error: {str(e)}")
+                
+                    self.machine_types[arch] = types
+                    logger.info(f"Found {len(types)} machine types for {arch}")
+                else:
+                    logger.warning(f"Machine type detection failed for {arch}: {result.stderr}")
+                    self.machine_types[arch] = []
+            except Exception as e:
+                logger.error(f"Error detecting machine types for {arch}: {str(e)}", exc_info=True)
+                self.machine_types[arch] = []
+        
+        return self.machine_types[arch]
 
     def to_dict(self):
         return {
@@ -354,8 +434,96 @@ class QEMUCapabilities:
             'has_spice': self.has_spice,
             'has_kvm': self.has_kvm,
             'version': self.version,
-            'error': self.error
+            'error': self.error,
+            'cpu_models': self.cpu_models,
+            'machine_types': self.machine_types
         }
+
+    def _detect_architectures(self) -> List[str]:
+        """Detect available QEMU system architectures."""
+        found_arches = set()
+        
+        # Try using glob to find QEMU binaries
+        try:
+            import glob
+            qemu_binaries = glob.glob('/usr/bin/qemu-system-*')
+            for binary in qemu_binaries:
+                arch = os.path.basename(binary).replace('qemu-system-', '')
+                if arch and os.access(binary, os.X_OK):
+                    found_arches.add(arch)
+        except:
+            pass
+
+        # If that didn't work, search common paths
+        if not found_arches:
+            search_paths = [
+                '/usr/bin',
+                '/usr/local/bin',
+                '/opt/homebrew/bin',
+                '/usr/local/opt/qemu/bin'
+            ] + os.environ.get('PATH', '').split(os.pathsep)
+
+            for path in search_paths:
+                if os.path.exists(path):
+                    for file in os.listdir(path):
+                        if file.startswith('qemu-system-'):
+                            full_path = os.path.join(path, file)
+                            if os.access(full_path, os.X_OK):
+                                arch = file.replace('qemu-system-', '')
+                                if arch:
+                                    found_arches.add(arch)
+
+        # If still no architectures found, try direct binary checks
+        if not found_arches:
+            common_arches = ['x86_64', 'i386', 'aarch64', 'arm', 'riscv64', 'ppc64', 'sparc64']
+            for arch in common_arches:
+                try:
+                    result = subprocess.run([f'qemu-system-{arch}', '--version'],
+                                         capture_output=True, text=True)
+                    if result.returncode == 0:
+                        found_arches.add(arch)
+                except FileNotFoundError:
+                    continue
+
+        return sorted(list(found_arches))
+
+    def _detect_spice_support(self):
+        """Detect SPICE support."""
+        try:
+            cmd = [f'qemu-system-{self.architectures[0]}', '-device', 'help']
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            self.has_spice = 'spice-' in result.stdout.lower()
+            
+            if not self.has_spice:
+                # Try spice help command
+                cmd = [f'qemu-system-{self.architectures[0]}', '-spice', 'help']
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                self.has_spice = result.returncode == 0
+                
+            if not self.has_spice:
+                # Check general help
+                cmd = [f'qemu-system-{self.architectures[0]}', '--help']
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                self.has_spice = '-spice' in result.stdout
+        except:
+            self.has_spice = False
+
+    def _detect_kvm_support(self):
+        """Detect KVM support."""
+        try:
+            cmd = [f'qemu-system-{self.architectures[0]}', '-accel', 'help']
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            self.has_kvm = 'kvm' in result.stdout.lower()
+
+            # Additional check for KVM on Linux
+            if os.path.exists('/dev/kvm'):
+                try:
+                    os.access('/dev/kvm', os.R_OK | os.W_OK)
+                    self.has_kvm = True
+                except:
+                    pass
+        except:
+            self.has_kvm = False
 
 # Initialize QEMU capabilities
 qemu_caps = QEMUCapabilities()

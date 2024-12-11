@@ -1,4 +1,5 @@
 vm_configs.json
+qemu_capabilities.json
 vm_logs/
 .DS_Store
 
