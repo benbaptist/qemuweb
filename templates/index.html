@@ -139,7 +139,14 @@
 
                             <!-- VM Configuration -->
                             <div class="mt-6">
-                                <h3 class="text-lg font-medium mb-4">Configuration</h3>
+                                <div class="flex justify-between items-center mb-4">
+                                    <h3 class="text-lg font-medium">Configuration</h3>
+                                    <button v-if="!selectedVM.running" 
+                                            @click="editVM(selectedVM)"
+                                            class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700">
+                                        Edit
+                                    </button>
+                                </div>
                                 <dl class="grid grid-cols-2 gap-4">
                                     <div class="bg-gray-50 p-4 rounded-lg">
                                         <dt class="text-sm font-medium text-gray-500">Architecture</dt>
@@ -154,10 +161,6 @@
                                         <dd class="mt-1 text-sm">{{ selectedVM.config.memory }} MB</dd>
                                     </div>
                                     <div class="bg-gray-50 p-4 rounded-lg">
-                                        <dt class="text-sm font-medium text-gray-500">Disk Path</dt>
-                                        <dd class="mt-1 text-sm">{{ selectedVM.config.disk_path }}</dd>
-                                    </div>
-                                    <div class="bg-gray-50 p-4 rounded-lg">
                                         <dt class="text-sm font-medium text-gray-500">KVM Enabled</dt>
                                         <dd class="mt-1 text-sm">{{ selectedVM.config.enable_kvm ? 'Yes' : 'No' }}</dd>
                                     </div>
@@ -166,6 +169,32 @@
                                         <dd class="mt-1 text-sm">{{ selectedVM.config.headless ? 'Yes' : 'No' }}</dd>
                                     </div>
                                 </dl>
+
+                                <!-- Disk Devices -->
+                                <div class="mt-6">
+                                    <h4 class="text-lg font-medium mb-4">Storage Devices</h4>
+                                    <div v-if="selectedVM.config.disks.length === 0" class="text-gray-500 text-center py-4">
+                                        No storage devices configured
+                                    </div>
+                                    <div v-else class="space-y-4">
+                                        <div v-for="(disk, index) in selectedVM.config.disks" :key="index" 
+                                             class="bg-gray-50 p-4 rounded-lg">
+                                            <div class="flex justify-between items-start">
+                                                <div>
+                                                    <span class="text-sm font-medium text-gray-500">
+                                                        {{ disk.type === 'cdrom' ? 'CD-ROM' : 'Hard Disk' }}
+                                                    </span>
+                                                    <p class="mt-1 text-sm break-all">{{ disk.path }}</p>
+                                                </div>
+                                                <div class="text-sm text-gray-500">
+                                                    <p>Interface: {{ disk.interface }}</p>
+                                                    <p v-if="disk.type === 'hdd'">Format: {{ disk.format }}</p>
+                                                    <p>{{ disk.readonly ? 'Read-only' : 'Read-write' }}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -173,6 +202,186 @@
                         Select a VM from the sidebar to view details
                     </div>
                 </main>
+            </div>
+        </div>
+
+        <!-- Edit VM Modal -->
+        <div v-if="showEditModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-4xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">Edit VM: {{ editingVM.name }}</h2>
+                    <button @click="showEditModal = false" class="text-gray-600 hover:text-gray-800">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                
+                <form @submit.prevent="saveVM" class="space-y-6">
+                    <!-- Basic Settings -->
+                    <div class="grid grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Model</label>
+                            <input v-model="editingVM.cpu" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
+                            <input v-model.number="editingVM.memory" type="number" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Architecture</label>
+                            <select v-model="editingVM.arch" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="x86_64">x86_64</option>
+                                <option value="aarch64">aarch64</option>
+                                <option value="arm">arm</option>
+                                <option value="riscv64">riscv64</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Machine Type</label>
+                            <input v-model="editingVM.machine" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-4">
+                        <div class="flex items-center">
+                            <input v-model="editingVM.enable_kvm" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">Enable KVM</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input v-model="editingVM.headless" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                        </div>
+                    </div>
+
+                    <!-- Storage Devices -->
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-medium">Storage Devices</h3>
+                            <button type="button" @click="addDisk" 
+                                    class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
+                                Add Device
+                            </button>
+                        </div>
+                        
+                        <div v-for="(disk, index) in editingVM.disks" :key="index" class="border rounded-lg p-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Device Type</label>
+                                    <select v-model="disk.type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="hdd">Hard Disk</option>
+                                        <option value="cdrom">CD-ROM</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Interface</label>
+                                    <select v-model="disk.interface" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="virtio">VirtIO</option>
+                                        <option value="ide">IDE</option>
+                                        <option value="scsi">SCSI</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Path</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm">
+                                        <input v-model="disk.path" type="text" 
+                                               class="flex-1 rounded-l-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        <button type="button" @click="browseDisk(index)"
+                                                class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 hover:bg-gray-100">
+                                            Browse
+                                        </button>
+                                    </div>
+                                </div>
+                                <div v-if="disk.type === 'hdd'" class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Format</label>
+                                    <select v-model="disk.format" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="qcow2">QCOW2</option>
+                                        <option value="raw">Raw</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2 flex items-center justify-between">
+                                    <div class="flex items-center">
+                                        <input v-model="disk.readonly" type="checkbox" 
+                                               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        <label class="ml-2 block text-sm text-gray-700">Read-only</label>
+                                    </div>
+                                    <button type="button" @click="removeDisk(index)"
+                                            class="text-red-600 hover:text-red-700">
+                                        Remove
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end space-x-3 mt-6">
+                        <button type="button" @click="showEditModal = false" 
+                                class="bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300">
+                            Cancel
+                        </button>
+                        <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+                            Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- File Browser Modal -->
+        <div v-if="showFileBrowser" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-3xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">Select File</h2>
+                    <button @click="showFileBrowser = false" class="text-gray-600 hover:text-gray-800">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="space-y-4">
+                    <!-- Current Path -->
+                    <div class="flex items-center space-x-2 text-sm text-gray-600">
+                        <button @click="navigateTo('/')" class="hover:text-indigo-600">/</button>
+                        <template v-for="(segment, index) in currentPath.split('/').filter(Boolean)">
+                            <span>/</span>
+                            <button @click="navigateTo(currentPath.split('/').slice(0, index + 2).join('/'))"
+                                    class="hover:text-indigo-600">
+                                {{ segment }}
+                            </button>
+                        </template>
+                    </div>
+
+                    <!-- File List -->
+                    <div class="border rounded-lg overflow-hidden">
+                        <div class="max-h-96 overflow-y-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50 sticky top-0">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Modified</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    <tr v-for="item in fileList" :key="item.path" 
+                                        @click="selectFile(item)"
+                                        class="hover:bg-gray-50 cursor-pointer">
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ item.name }}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ item.type }}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {{ item.type === 'directory' ? '-' : formatSize(item.size) }}
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {{ new Date(item.modified).toLocaleString() }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -183,18 +392,24 @@
             el: '#app',
             data: {
                 showCreateModal: false,
+                showEditModal: false,
+                showFileBrowser: false,
                 newVM: {
                     name: '',
                     cpu: 'qemu64',
                     memory: 1024,
-                    disk_path: '',
+                    disks: [],
                     enable_kvm: false,
                     headless: false,
                     arch: 'x86_64'
                 },
                 vms: [],
                 selectedVM: null,
-                socket: null
+                editingVM: null,
+                socket: null,
+                currentPath: '/',
+                fileList: [],
+                editingDiskIndex: null
             },
             mounted() {
                 this.socket = io();
@@ -217,93 +432,79 @@
                 selectVM(vm) {
                     this.selectedVM = vm;
                 },
-                async createVM() {
+                editVM(vm) {
+                    this.editingVM = JSON.parse(JSON.stringify(vm.config));
+                    if (!this.editingVM.disks) {
+                        this.editingVM.disks = [];
+                    }
+                    this.showEditModal = true;
+                },
+                async saveVM() {
                     try {
-                        const response = await fetch('/api/vms', {
-                            method: 'POST',
+                        const response = await fetch(`/api/vms/${this.editingVM.name}`, {
+                            method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json'
                             },
-                            body: JSON.stringify(this.newVM)
+                            body: JSON.stringify(this.editingVM)
                         });
                         const result = await response.json();
                         if (result.success) {
-                            this.showCreateModal = false;
+                            this.showEditModal = false;
                             await this.fetchVMs();
-                            // Reset form
-                            this.newVM = {
-                                name: '',
-                                cpu: 'qemu64',
-                                memory: 1024,
-                                disk_path: '',
-                                enable_kvm: false,
-                                headless: false,
-                                arch: 'x86_64'
-                            };
                         }
                     } catch (error) {
-                        console.error('Error creating VM:', error);
+                        console.error('Error updating VM:', error);
                     }
                 },
-                async startVM(name) {
+                addDisk() {
+                    if (!this.editingVM.disks) {
+                        this.editingVM.disks = [];
+                    }
+                    this.editingVM.disks.push({
+                        path: '',
+                        type: 'hdd',
+                        format: 'qcow2',
+                        interface: 'virtio',
+                        readonly: false
+                    });
+                },
+                removeDisk(index) {
+                    this.editingVM.disks.splice(index, 1);
+                },
+                async browseDisk(index) {
+                    this.editingDiskIndex = index;
+                    this.showFileBrowser = true;
+                    await this.loadFiles(this.currentPath);
+                },
+                async loadFiles(path) {
                     try {
-                        const response = await fetch(`/api/vms/${name}/start`, {
-                            method: 'POST'
-                        });
-                        const result = await response.json();
-                        if (result.success) {
-                            await this.fetchVMs();
-                        }
+                        const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+                        this.fileList = await response.json();
+                        this.currentPath = path;
                     } catch (error) {
-                        console.error('Error starting VM:', error);
+                        console.error('Error loading files:', error);
                     }
                 },
-                async stopVM(name) {
-                    try {
-                        const response = await fetch(`/api/vms/${name}/stop`, {
-                            method: 'POST'
-                        });
-                        const result = await response.json();
-                        if (result.success) {
-                            await this.fetchVMs();
-                        }
-                    } catch (error) {
-                        console.error('Error stopping VM:', error);
-                    }
+                navigateTo(path) {
+                    this.loadFiles(path);
                 },
-                async deleteVM(name) {
-                    if (!confirm(`Are you sure you want to delete VM "${name}"?`)) {
-                        return;
-                    }
-                    try {
-                        const response = await fetch(`/api/vms/${name}`, {
-                            method: 'DELETE'
-                        });
-                        const result = await response.json();
-                        if (result.success) {
-                            if (this.selectedVM && this.selectedVM.name === name) {
-                                this.selectedVM = null;
-                            }
-                            await this.fetchVMs();
-                        }
-                    } catch (error) {
-                        console.error('Error deleting VM:', error);
-                    }
-                },
-                updateVMStatus(status) {
-                    const index = this.vms.findIndex(vm => vm.name === status.name);
-                    if (index !== -1) {
-                        this.vms.splice(index, 1, status);
-                        if (this.selectedVM && this.selectedVM.name === status.name) {
-                            this.selectedVM = status;
-                        }
+                selectFile(item) {
+                    if (item.type === 'directory') {
+                        this.loadFiles(item.path);
                     } else {
-                        this.vms.push(status);
+                        this.editingVM.disks[this.editingDiskIndex].path = item.path;
+                        this.showFileBrowser = false;
                     }
                 },
-                handleVMStopped(data) {
-                    this.fetchVMs();
-                }
+                formatSize(bytes) {
+                    if (bytes === 0) return '0 B';
+                    const k = 1024;
+                    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                },
+                // ... existing methods (startVM, stopVM, etc.) ...
             }
         });
     </script>

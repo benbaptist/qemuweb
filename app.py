@@ -1,7 +1,7 @@
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from dataclasses import dataclass, field
 from dataclasses_json import dataclass_json
@@ -15,6 +15,7 @@ import queue
 import socket
 from typing import Dict, Optional, List, Tuple
 from datetime import datetime
+from pathlib import Path
 
 # Load configuration
 CONFIG_FILE = 'config.json'
@@ -73,6 +74,58 @@ VM_CONFIG_FILE = 'vm_configs.json'
 VNC_PORT_START = config['vnc']['start_port']
 VNC_PORT_RANGE = config['vnc']['port_range']
 
+@dataclass
+class DiskDevice:
+    path: str
+    type: str = "hdd"  # "hdd" or "cdrom"
+    format: str = "qcow2"
+    interface: str = "virtio"  # virtio, ide, scsi
+    readonly: bool = False
+
+    def to_dict(self):
+        return {
+            "path": self.path,
+            "type": self.type,
+            "format": self.format,
+            "interface": self.interface,
+            "readonly": self.readonly
+        }
+
+    @staticmethod
+    def from_dict(data):
+        return DiskDevice(
+            path=data.get("path", ""),
+            type=data.get("type", "hdd"),
+            format=data.get("format", "qcow2"),
+            interface=data.get("interface", "virtio"),
+            readonly=data.get("readonly", False)
+        )
+
+@dataclass_json
+@dataclass
+class VMConfig:
+    name: str
+    cpu: str = config['qemu']['default_cpu']
+    memory: int = config['qemu']['default_memory']  # in MB
+    disks: List[DiskDevice] = field(default_factory=list)
+    enable_kvm: bool = False
+    headless: bool = False
+    vnc_port: Optional[int] = None
+    arch: str = "x86_64"
+    machine: str = config['qemu']['default_machine']
+    additional_args: List[str] = field(default_factory=list)
+
+    def to_dict(self):
+        data = super().to_dict()
+        data['disks'] = [disk.to_dict() for disk in self.disks]
+        return data
+
+    @classmethod
+    def from_dict(cls, data):
+        if 'disks' in data:
+            data['disks'] = [DiskDevice.from_dict(d) for d in data['disks']]
+        return cls(**data)
+
 def find_free_vnc_port() -> Tuple[bool, int]:
     """Find a free VNC port starting from VNC_PORT_START"""
     for port in range(VNC_PORT_START, VNC_PORT_START + VNC_PORT_RANGE):
@@ -84,19 +137,32 @@ def find_free_vnc_port() -> Tuple[bool, int]:
             continue
     return False, -1
 
-@dataclass_json
-@dataclass
-class VMConfig:
-    name: str
-    cpu: str = config['qemu']['default_cpu']
-    memory: int = config['qemu']['default_memory']  # in MB
-    disk_path: str = ""
-    enable_kvm: bool = False
-    headless: bool = False
-    vnc_port: Optional[int] = None
-    arch: str = "x86_64"
-    machine: str = config['qemu']['default_machine']
-    additional_args: List[str] = field(default_factory=list)
+def list_directory(path: str = "/") -> List[Dict]:
+    """List directory contents with file information."""
+    try:
+        path = os.path.abspath(path)
+        if not os.path.exists(path):
+            return []
+
+        items = []
+        for item in os.scandir(path):
+            try:
+                is_dir = item.is_dir()
+                if is_dir or item.name.endswith(('.qcow2', '.img', '.iso', '.raw')):
+                    items.append({
+                        'name': item.name,
+                        'path': os.path.join(path, item.name),
+                        'type': 'directory' if is_dir else 'file',
+                        'size': item.stat().st_size if not is_dir else None,
+                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat()
+                    })
+            except (PermissionError, OSError):
+                continue
+
+        return sorted(items, key=lambda x: (x['type'] == 'file', x['name'].lower()))
+    except Exception as e:
+        logger.error(f"Error listing directory {path}: {str(e)}")
+        return []
 
 class VMManager:
     def __init__(self):
@@ -104,9 +170,56 @@ class VMManager:
         self.processes: Dict[str, subprocess.Popen] = {}
         self.monitor_threads: Dict[str, threading.Thread] = {}
         self.stop_events: Dict[str, threading.Event] = {}
-        self.vnc_ports: Dict[str, int] = {}  # Track VNC ports in use
+        self.vnc_ports: Dict[str, int] = {}
         self.load_vm_configs()
+
+    def generate_qemu_command(self, config: VMConfig) -> List[str]:
+        cmd = [
+            f"qemu-system-{config.arch}",
+            "-machine", config.machine,
+            "-cpu", config.cpu,
+            "-m", str(config.memory)
+        ]
         
+        # Add disk devices
+        for i, disk in enumerate(config.disks):
+            if disk.type == "cdrom":
+                drive_args = f"file={disk.path},media=cdrom"
+                if disk.readonly:
+                    drive_args += ",readonly=on"
+            else:
+                drive_args = f"file={disk.path},format={disk.format}"
+                if disk.interface == "virtio":
+                    drive_args += ",if=virtio"
+                elif disk.interface == "ide":
+                    drive_args += f",if=ide,index={i}"
+                elif disk.interface == "scsi":
+                    drive_args += f",if=scsi,index={i}"
+            
+            cmd.extend(["-drive", drive_args])
+        
+        if config.enable_kvm:
+            cmd.extend(["-enable-kvm"])
+            
+        if not config.headless:
+            if config.vnc_port is None:
+                success, port = find_free_vnc_port()
+                if not success:
+                    raise RuntimeError("No available VNC ports found")
+                config.vnc_port = port
+                self.save_vm_configs()
+            
+            cmd.extend(["-vnc", f":{config.vnc_port}"])
+            self.vnc_ports[config.name] = config.vnc_port
+            logger.info(f"VM {config.name} assigned VNC port {config.vnc_port} (TCP port {VNC_PORT_START + config.vnc_port})")
+        else:
+            cmd.extend(["-nographic"])
+            
+        if config.additional_args:
+            cmd.extend(config.additional_args)
+            
+        return cmd
+    
     def load_vm_configs(self):
         try:
             if os.path.exists(VM_CONFIG_FILE):
@@ -130,45 +243,6 @@ class VMManager:
                 json.dump(configs, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving VM configs: {str(e)}")
-    
-    def generate_qemu_command(self, config: VMConfig) -> List[str]:
-        cmd = [
-            f"qemu-system-{config.arch}",
-            "-machine", config.machine,
-            "-cpu", config.cpu,
-            "-m", str(config.memory)
-        ]
-        
-        if config.disk_path:
-            cmd.extend(["-drive", f"file={config.disk_path},format=qcow2"])
-        
-        if config.enable_kvm:
-            cmd.extend(["-enable-kvm"])
-            
-        if not config.headless:
-            # Find an available VNC port if not specified
-            if config.vnc_port is None:
-                success, port = find_free_vnc_port()
-                if not success:
-                    raise RuntimeError("No available VNC ports found")
-                config.vnc_port = port
-                self.save_vm_configs()  # Save the assigned port
-            
-            cmd.extend(["-vnc", f":{config.vnc_port}"])
-            self.vnc_ports[config.name] = config.vnc_port
-            logger.info(f"VM {config.name} assigned VNC port {config.vnc_port} (TCP port {VNC_PORT_START + config.vnc_port})")
-        else:
-            cmd.extend(["-nographic"])
-            
-        if config.additional_args:
-            cmd.extend(config.additional_args)
-            
-        return cmd
-    
-    def _setup_vm_logging(self, vm_name: str) -> tuple:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        log_file = os.path.join(LOG_DIR, f'{vm_name}_{timestamp}.log')
-        return open(log_file, 'w')
     
     def add_vm(self, config: VMConfig) -> bool:
         try:
@@ -391,6 +465,31 @@ def stop_vm(name):
 def get_vm_status(name):
     status = vm_manager.get_vm_status(name)
     return jsonify(status)
+
+@app.route('/api/browse', methods=['GET'])
+def browse_files():
+    path = request.args.get('path', '/')
+    return jsonify(list_directory(path))
+
+@app.route('/api/vms/<name>', methods=['PUT'])
+def update_vm(name):
+    if name not in vm_manager.vms:
+        return jsonify({'success': False, 'error': 'VM not found'}), 404
+        
+    if name in vm_manager.processes:
+        return jsonify({'success': False, 'error': 'Cannot modify running VM'}), 400
+        
+    try:
+        config = VMConfig.from_dict(request.json)
+        if config.name != name:
+            return jsonify({'success': False, 'error': 'VM name cannot be changed'}), 400
+            
+        vm_manager.vms[name] = config
+        vm_manager.save_vm_configs()
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error updating VM {name}: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @socketio.on('connect')
 def handle_connect():
