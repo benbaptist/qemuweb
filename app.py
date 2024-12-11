@@ -341,10 +341,10 @@ class VMManager:
         self.processes: Dict[str, subprocess.Popen] = {}
         self.monitor_threads: Dict[str, threading.Thread] = {}
         self.stop_events: Dict[str, threading.Event] = {}
-        self.spice_websocket_processes: Dict[str, subprocess.Popen] = {}
+        self.websocket_processes: Dict[str, subprocess.Popen] = {}  # Combined for both SPICE and VNC
         self.websockify_available = check_websockify_available()
         if not self.websockify_available:
-            logger.warning("websockify not found. SPICE support will be limited to direct connections.")
+            logger.warning("websockify not found. Remote display support will be limited.")
         self.load_vm_configs()
 
     def generate_qemu_command(self, config: VMConfig) -> List[str]:
@@ -444,21 +444,34 @@ class VMManager:
             
         return cmd
 
-    def start_spice_websocket_proxy(self, vm_name: str, config: VMConfig) -> bool:
-        """Start WebSocket proxy for SPICE."""
+    def start_websocket_proxy(self, vm_name: str, config: VMConfig) -> bool:
+        """Start WebSocket proxy for either SPICE or VNC."""
         if not self.websockify_available:
             logger.warning(f"Cannot start WebSocket proxy for VM {vm_name}: websockify not installed")
             return False
 
         try:
-            if not config.display.websocket_port or not config.display.port:
-                logger.error(f"Missing WebSocket or SPICE port configuration for VM {vm_name}")
+            if not config.display.port:
+                logger.error(f"Missing port configuration for VM {vm_name}")
                 return False
+
+            # For VNC, we need to add the standard VNC port offset
+            target_port = config.display.port
+            if config.display.type == "vnc":
+                target_port = VNC_PORT_START + (config.display.port - VNC_PORT_START)
+
+            # Allocate a WebSocket port if not already assigned
+            if not config.display.websocket_port:
+                success, ws_port = find_free_port(SPICE_WS_PORT_START, SPICE_PORT_RANGE)
+                if not success:
+                    raise RuntimeError("No available WebSocket ports found")
+                config.display.websocket_port = ws_port
+                self.save_vm_configs()
 
             proxy_cmd = [
                 "websockify",
                 str(config.display.websocket_port),
-                f"{config.display.address}:{config.display.port}"
+                f"{config.display.address}:{target_port}"
             ]
             
             process = subprocess.Popen(
@@ -475,11 +488,11 @@ class VMManager:
                 logger.error(f"WebSocket proxy failed to start: {error_msg}")
                 return False
             
-            self.spice_websocket_processes[vm_name] = process
-            logger.info(f"Started SPICE WebSocket proxy for VM {vm_name} on port {config.display.websocket_port}")
+            self.websocket_processes[vm_name] = process
+            logger.info(f"Started WebSocket proxy for VM {vm_name} on port {config.display.websocket_port}")
             return True
         except Exception as e:
-            logger.error(f"Failed to start SPICE WebSocket proxy for VM {vm_name}: {str(e)}")
+            logger.error(f"Failed to start WebSocket proxy for VM {vm_name}: {str(e)}")
             return False
 
     def load_vm_configs(self):
@@ -531,7 +544,7 @@ class VMManager:
                 # Remove from all dictionaries
                 self.stop_events.pop(name, None)
                 self.monitor_threads.pop(name, None)
-                self.spice_websocket_processes.pop(name, None)
+                self.websocket_processes.pop(name, None)
                 del self.vms[name]
                 self.save_vm_configs()
                 return True
@@ -547,9 +560,9 @@ class VMManager:
                 
             config = self.vms[name]
             
-            # Check if SPICE is requested but websockify is not available
-            if not config.headless and config.display.type == "spice" and not self.websockify_available:
-                logger.warning(f"Switching VM {name} to VNC mode as websockify is not available")
+            # Check if SPICE is requested but not available
+            if not config.headless and config.display.type == "spice" and not qemu_caps.has_spice:
+                logger.warning(f"Switching VM {name} to VNC mode as SPICE is not available")
                 config.display.type = "vnc"
                 config.display.port = None  # Reset port to get a new VNC port
                 self.save_vm_configs()
@@ -576,15 +589,15 @@ class VMManager:
             
             self.processes[name] = process
             
-            # Start SPICE WebSocket proxy if needed
-            if not config.headless and config.display.type == "spice":
-                if not self.start_spice_websocket_proxy(name, config):
+            # Start WebSocket proxy if needed
+            if not config.headless:
+                if not self.start_websocket_proxy(name, config):
                     process.terminate()
                     try:
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         process.kill()
-                    return False, "Failed to start SPICE WebSocket proxy"
+                    return False, "Failed to start WebSocket proxy"
             
             # Create a new stop event for this VM
             self.stop_events[name] = threading.Event()
@@ -614,14 +627,14 @@ class VMManager:
                 if process.poll() is not None:
                     logger.info(f"VM {vm_name} has stopped with return code {process.returncode}")
                     self.processes.pop(vm_name, None)
-                    if vm_name in self.spice_websocket_processes:
+                    if vm_name in self.websocket_processes:
                         try:
-                            self.spice_websocket_processes[vm_name].terminate()
-                            self.spice_websocket_processes[vm_name].wait(timeout=5)
+                            self.websocket_processes[vm_name].terminate()
+                            self.websocket_processes[vm_name].wait(timeout=5)
                         except:
-                            self.spice_websocket_processes[vm_name].kill()
+                            self.websocket_processes[vm_name].kill()
                         finally:
-                            self.spice_websocket_processes.pop(vm_name, None)
+                            self.websocket_processes.pop(vm_name, None)
                     # Use eventlet's spawn to safely emit the event
                     eventlet.spawn(self._emit_vm_stopped, vm_name)
                     break
@@ -667,15 +680,15 @@ class VMManager:
         process = self.processes.get(name)
         if process:
             try:
-                # Stop SPICE WebSocket proxy if running
-                if name in self.spice_websocket_processes:
+                # Stop WebSocket proxy if running
+                if name in self.websocket_processes:
                     try:
-                        self.spice_websocket_processes[name].terminate()
-                        self.spice_websocket_processes[name].wait(timeout=5)
+                        self.websocket_processes[name].terminate()
+                        self.websocket_processes[name].wait(timeout=5)
                     except:
-                        self.spice_websocket_processes[name].kill()
+                        self.websocket_processes[name].kill()
                     finally:
-                        self.spice_websocket_processes.pop(name, None)
+                        self.websocket_processes.pop(name, None)
                 
                 # Set the stop event first
                 if name in self.stop_events:

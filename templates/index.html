@@ -32,15 +32,18 @@
     <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/prng4.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/thirdparty/rng.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/ticket.js"></script>
+    <!-- noVNC Core Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/dist/novnc.min.js"></script>
     <style>
-        .spice-display {
+        .spice-display, .vnc-display {
             width: 100%;
             height: 100%;
             background-color: black;
         }
-        .spice-display canvas {
+        .spice-display canvas, .vnc-display canvas {
             width: 100%;
             height: 100%;
+            object-fit: contain;
         }
     </style>
 </head>
@@ -582,8 +585,8 @@
                     </div>
                 </div>
                 <div class="flex-1 relative bg-black">
-                    <div id="spice-area" class="absolute inset-0">
-                        <!-- SPICE display will be inserted here -->
+                    <div id="display-area" class="absolute inset-0">
+                        <!-- Display will be inserted here -->
                     </div>
                 </div>
                 <div class="p-4 border-t bg-gray-50 flex justify-between items-center">
@@ -637,9 +640,10 @@
                 currentPath: '/',
                 fileList: [],
                 editingDiskIndex: null,
+                spiceConnection: null,
+                vncConnection: null,
                 showDisplayModal: false,
-                isFullscreen: false,
-                spiceConnection: null
+                isFullscreen: false
             },
             mounted() {
                 this.socket = io();
@@ -885,82 +889,6 @@
                         this.showError(`Failed to create VM: ${error.message}`);
                     }
                 },
-                async openDisplay(vm) {
-                    if (!vm.running) {
-                        this.showError("VM must be running to open display");
-                        return;
-                    }
-
-                    this.showDisplayModal = true;
-                    await this.$nextTick();
-
-                    if (vm.display.type === 'spice') {
-                        this.connectSpice(vm);
-                    }
-                },
-
-                connectSpice(vm) {
-                    const spiceArea = document.getElementById('spice-area');
-                    spiceArea.innerHTML = '';
-
-                    const uri = `ws://${window.location.hostname}:${vm.display.websocket_port}`;
-                    const password = vm.display.password;
-
-                    try {
-                        this.spiceConnection = new SpiceMainConn({
-                            uri: uri,
-                            screen_id: 'spice-area',
-                            password: password,
-                            onerror: (e) => {
-                                console.error('SPICE error:', e);
-                                this.showError(`SPICE connection error: ${e.message || 'Unknown error'}`);
-                            },
-                            onsuccess: () => {
-                                this.showSuccess('SPICE connection established');
-                            }
-                        });
-                    } catch (e) {
-                        console.error('Failed to create SPICE connection:', e);
-                        this.showError(`Failed to create SPICE connection: ${e.message}`);
-                    }
-                },
-
-                closeDisplay() {
-                    if (this.spiceConnection) {
-                        this.spiceConnection.stop();
-                        this.spiceConnection = null;
-                    }
-                    this.showDisplayModal = false;
-                },
-
-                toggleFullscreen() {
-                    const elem = document.getElementById('spice-area');
-                    if (!document.fullscreenElement) {
-                        elem.requestFullscreen().catch(err => {
-                            this.showError(`Error attempting to enable fullscreen: ${err.message}`);
-                        });
-                    } else {
-                        document.exitFullscreen();
-                    }
-                },
-
-                sendCtrlAltDel() {
-                    if (this.spiceConnection) {
-                        this.spiceConnection.sendCtrlAltDel();
-                        this.showSuccess('Sent Ctrl+Alt+Del');
-                    }
-                },
-
-                // Add a button in your VM controls to open display
-                addDisplayButton() {
-                    return `
-                        <button @click="openDisplay(selectedVM)"
-                                class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700">
-                            Open Display
-                        </button>
-                    `;
-                },
-
                 async fetchQEMUCapabilities() {
                     try {
                         const response = await fetch('/api/qemu/capabilities');
@@ -974,13 +902,9 @@
                         this.showError('Failed to fetch QEMU capabilities');
                     }
                 },
-
-                // Update the architecture selection in the create VM form
                 updateArchitectureOptions() {
                     return this.qemuCapabilities?.architectures || ['x86_64'];
                 },
-
-                // Add warning badges for missing features
                 getFeatureStatus(feature) {
                     switch (feature) {
                         case 'kvm':
@@ -1002,12 +926,153 @@
                         default:
                             return null;
                     }
-                }
+                },
+                toggleFullscreen() {
+                    const elem = document.getElementById('display-area');
+                    if (!document.fullscreenElement) {
+                        elem.requestFullscreen().catch(err => {
+                            this.showError(`Error attempting to enable fullscreen: ${err.message}`);
+                        });
+                    } else {
+                        document.exitFullscreen();
+                    }
+                },
+                sendCtrlAltDel() {
+                    if (this.spiceConnection) {
+                        this.spiceConnection.sendCtrlAltDel();
+                        this.showSuccess('Sent Ctrl+Alt+Del');
+                    } else if (this.vncConnection) {
+                        this.vncConnection.sendCtrlAltDel();
+                        this.showSuccess('Sent Ctrl+Alt+Del');
+                    }
+                },
+                async openDisplay(vm) {
+                    if (!vm.running) {
+                        this.showError("VM must be running to open display");
+                        return;
+                    }
+
+                    this.showDisplayModal = true;
+                    await this.$nextTick();
+
+                    const displayArea = document.getElementById('display-area');
+                    displayArea.innerHTML = '';
+
+                    if (vm.display.type === 'spice') {
+                        this.connectSpice(vm);
+                    } else {
+                        this.connectVNC(vm);
+                    }
+                },
+
+                connectVNC(vm) {
+                    try {
+                        if (!window.novnc || !window.novnc.RFB) {
+                            throw new Error("noVNC library not loaded properly");
+                        }
+
+                        // Calculate the websocket URL
+                        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                        const wsPort = vm.display.websocket_port || (vm.display.port + 5700);
+                        const wsUrl = `${wsProtocol}//${window.location.hostname}:${wsPort}`;
+
+                        console.log('Connecting to VNC at:', wsUrl);
+
+                        // Initialize noVNC
+                        this.vncConnection = new window.novnc.RFB(
+                            document.getElementById('display-area'),
+                            wsUrl,
+                            {
+                                credentials: { password: vm.display.password },
+                                shared: true,
+                                repeaterID: '',
+                                showDotCursor: true,
+                                background: '#000000',
+                                qualityLevel: 6,
+                                compressionLevel: 2,
+                                scaleViewport: true,
+                                clipViewport: true,
+                            }
+                        );
+
+                        this.vncConnection.addEventListener('connect', () => {
+                            console.log('VNC connected');
+                            this.showSuccess('VNC connection established');
+                        });
+
+                        this.vncConnection.addEventListener('disconnect', (e) => {
+                            console.log('VNC disconnected:', e);
+                            this.showError(`VNC disconnected: ${e.detail?.reason || 'Unknown reason'}`);
+                        });
+
+                        this.vncConnection.addEventListener('securityfailure', (e) => {
+                            console.log('VNC security error:', e);
+                            this.showError(`VNC security error: ${e.detail?.reason || 'Authentication failed'}`);
+                        });
+
+                        // Handle canvas resize
+                        const resizeObserver = new ResizeObserver(() => {
+                            if (this.vncConnection && this.vncConnection._fbWidth > 0) {
+                                const container = document.getElementById('display-area');
+                                const scale = Math.min(
+                                    container.clientWidth / this.vncConnection._fbWidth,
+                                    container.clientHeight / this.vncConnection._fbHeight
+                                );
+                                if (scale > 0) {
+                                    this.vncConnection.scaleViewport = true;
+                                    this.vncConnection.scaleFactor = scale;
+                                }
+                            }
+                        });
+                        resizeObserver.observe(document.getElementById('display-area'));
+
+                    } catch (e) {
+                        console.error('Failed to create VNC connection:', e);
+                        this.showError(`Failed to create VNC connection: ${e.message}`);
+                    }
+                },
+
+                closeDisplay() {
+                    if (this.spiceConnection) {
+                        this.spiceConnection.stop();
+                        this.spiceConnection = null;
+                    }
+                    if (this.vncConnection) {
+                        this.vncConnection.disconnect();
+                        this.vncConnection = null;
+                    }
+                    this.showDisplayModal = false;
+                },
+
+                connectSpice(vm) {
+                    try {
+                        const uri = `ws://${window.location.hostname}:${vm.display.websocket_port}`;
+                        const password = vm.display.password;
+
+                        console.log('Connecting to SPICE at:', uri);
+
+                        this.spiceConnection = new window.SpiceMainConn({
+                            uri: uri,
+                            screen_id: 'display-area',
+                            password: password,
+                            onerror: (e) => {
+                                console.error('SPICE error:', e);
+                                this.showError(`SPICE connection error: ${e.message || 'Unknown error'}`);
+                            },
+                            onsuccess: () => {
+                                this.showSuccess('SPICE connection established');
+                            }
+                        });
+                    } catch (e) {
+                        console.error('Failed to create SPICE connection:', e);
+                        this.showError(`Failed to create SPICE connection: ${e.message}`);
+                    }
+                },
+
+                // ... rest of your existing methods ...
             },
             beforeDestroy() {
-                if (this.spiceConnection) {
-                    this.spiceConnection.stop();
-                }
+                this.closeDisplay();
                 document.removeEventListener('fullscreenchange');
             }
         });
