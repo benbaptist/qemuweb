@@ -1,0 +1,16 @@
+{
+    "web_interface": {
+        "host": "0.0.0.0",
+        "port": 5011,
+        "debug": true
+    },
+    "vnc": {
+        "start_port": 5900,
+        "port_range": 200
+    },
+    "qemu": {
+        "default_memory": 1024,
+        "default_cpu": "qemu64",
+        "default_machine": "q35"
+    }
+} 

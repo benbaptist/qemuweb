@@ -16,6 +16,41 @@ import socket
 from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 
+# Load configuration
+CONFIG_FILE = 'config.json'
+DEFAULT_CONFIG = {
+    "web_interface": {
+        "host": "0.0.0.0",
+        "port": 5000,
+        "debug": True
+    },
+    "vnc": {
+        "start_port": 5900,
+        "port_range": 200
+    },
+    "qemu": {
+        "default_memory": 1024,
+        "default_cpu": "qemu64",
+        "default_machine": "q35"
+    }
+}
+
+def load_config():
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r') as f:
+                return {**DEFAULT_CONFIG, **json.load(f)}
+        else:
+            # Create default config file if it doesn't exist
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(DEFAULT_CONFIG, f, indent=4)
+            return DEFAULT_CONFIG
+    except Exception as e:
+        logger.error(f"Error loading config: {str(e)}, using defaults")
+        return DEFAULT_CONFIG
+
+config = load_config()
+
 # Configure logging
 LOG_DIR = 'vm_logs'
 if not os.path.exists(LOG_DIR):
@@ -35,8 +70,8 @@ app.config['SECRET_KEY'] = os.urandom(24)
 socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
 
 VM_CONFIG_FILE = 'vm_configs.json'
-VNC_PORT_START = 5900  # QEMU's :0 maps to 5900
-VNC_PORT_RANGE = 200   # We'll check ports 5900-6099
+VNC_PORT_START = config['vnc']['start_port']
+VNC_PORT_RANGE = config['vnc']['port_range']
 
 def find_free_vnc_port() -> Tuple[bool, int]:
     """Find a free VNC port starting from VNC_PORT_START"""
@@ -53,14 +88,14 @@ def find_free_vnc_port() -> Tuple[bool, int]:
 @dataclass
 class VMConfig:
     name: str
-    cpu: str
-    memory: int  # in MB
-    disk_path: str
+    cpu: str = config['qemu']['default_cpu']
+    memory: int = config['qemu']['default_memory']  # in MB
+    disk_path: str = ""
     enable_kvm: bool = False
     headless: bool = False
     vnc_port: Optional[int] = None
     arch: str = "x86_64"
-    machine: str = "q35"
+    machine: str = config['qemu']['default_machine']
     additional_args: List[str] = field(default_factory=list)
 
 class VMManager:
@@ -366,4 +401,11 @@ def handle_disconnect():
     logger.info('Client disconnected')
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5011, use_reloader=False) 
+    logger.info(f"Starting web interface on {config['web_interface']['host']}:{config['web_interface']['port']}")
+    socketio.run(
+        app,
+        host=config['web_interface']['host'],
+        port=config['web_interface']['port'],
+        debug=config['web_interface']['debug'],
+        use_reloader=False  # Disable reloader to prevent issues
+    ) 
