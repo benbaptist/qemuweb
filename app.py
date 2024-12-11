@@ -17,6 +17,7 @@ import random
 from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 from pathlib import Path
+import time
 
 # Load configuration
 CONFIG_FILE = 'config.json'
@@ -214,6 +215,17 @@ def list_directory(path: str = "/") -> List[Dict]:
         logger.error(f"Error listing directory {path}: {str(e)}")
         return []
 
+def check_websockify_available():
+    """Check if websockify is available in the system."""
+    try:
+        subprocess.run(['websockify', '--help'], 
+                     stdout=subprocess.PIPE, 
+                     stderr=subprocess.PIPE, 
+                     check=True)
+        return True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
 class VMManager:
     def __init__(self):
         self.vms: Dict[str, VMConfig] = {}
@@ -221,6 +233,9 @@ class VMManager:
         self.monitor_threads: Dict[str, threading.Thread] = {}
         self.stop_events: Dict[str, threading.Event] = {}
         self.spice_websocket_processes: Dict[str, subprocess.Popen] = {}
+        self.websockify_available = check_websockify_available()
+        if not self.websockify_available:
+            logger.warning("websockify not found. SPICE support will be limited to direct connections.")
         self.load_vm_configs()
 
     def generate_qemu_command(self, config: VMConfig) -> List[str]:
@@ -304,6 +319,10 @@ class VMManager:
 
     def start_spice_websocket_proxy(self, vm_name: str, config: VMConfig) -> bool:
         """Start WebSocket proxy for SPICE."""
+        if not self.websockify_available:
+            logger.warning(f"Cannot start WebSocket proxy for VM {vm_name}: websockify not installed")
+            return False
+
         try:
             if not config.display.websocket_port or not config.display.port:
                 logger.error(f"Missing WebSocket or SPICE port configuration for VM {vm_name}")
@@ -320,6 +339,14 @@ class VMManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
+            
+            # Check if the process started successfully
+            time.sleep(1)  # Give the process a moment to start
+            if process.poll() is not None:
+                _, stderr = process.communicate()
+                error_msg = stderr.decode('utf-8').strip()
+                logger.error(f"WebSocket proxy failed to start: {error_msg}")
+                return False
             
             self.spice_websocket_processes[vm_name] = process
             logger.info(f"Started SPICE WebSocket proxy for VM {vm_name} on port {config.display.websocket_port}")
@@ -387,12 +414,19 @@ class VMManager:
             return False
     
     def start_vm(self, name: str) -> Tuple[bool, Optional[str]]:
-        """Start a VM and return success status and error message if any."""
         try:
             if name not in self.vms:
                 return False, "VM not found"
                 
             config = self.vms[name]
+            
+            # Check if SPICE is requested but websockify is not available
+            if not config.headless and config.display.type == "spice" and not self.websockify_available:
+                logger.warning(f"Switching VM {name} to VNC mode as websockify is not available")
+                config.display.type = "vnc"
+                config.display.port = None  # Reset port to get a new VNC port
+                self.save_vm_configs()
+            
             cmd = self.generate_qemu_command(config)
             logger.info(f"Starting VM {name} with command: {' '.join(cmd)}")
             
@@ -419,6 +453,10 @@ class VMManager:
             if not config.headless and config.display.type == "spice":
                 if not self.start_spice_websocket_proxy(name, config):
                     process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
                     return False, "Failed to start SPICE WebSocket proxy"
             
             # Create a new stop event for this VM
