@@ -635,6 +635,9 @@ class VMManager:
                 # Calculate VNC display number (port - 5900)
                 vnc_display = config.display.port - VNC_PORT_START
                 cmd.extend(["-vnc", f":{vnc_display}"])
+                
+                # Add USB tablet for better mouse handling in VNC
+                cmd.extend(["-usbdevice", "tablet"])
         else:
             cmd.extend(["-nographic"])
             
