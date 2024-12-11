@@ -7,8 +7,8 @@
     "enable_kvm": false,
     "headless": false,
     "display": {
-      "type": "spice",
-      "port": 5001,
+      "type": "vnc",
+      "port": 5901,
       "websocket_port": 6000,
       "address": "127.0.0.1",
       "password": "R55GgKBRruuR"

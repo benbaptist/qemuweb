@@ -249,15 +249,48 @@ class QEMUCapabilities:
                 self.error = "QEMU not found or not working properly"
                 return
 
-            # Detect available architectures by checking for qemu-system-* binaries
-            arch_binaries = subprocess.run(['which', '-a', 'qemu-system-*'], 
-                                        shell=True, capture_output=True, text=True)
-            if arch_binaries.returncode == 0:
-                for line in arch_binaries.stdout.splitlines():
-                    if line:
-                        arch = line.split('qemu-system-')[-1]
-                        if arch:
-                            self.architectures.append(arch)
+            # Detect available architectures by checking common paths
+            common_paths = [
+                '/usr/bin',
+                '/usr/local/bin',
+                '/opt/homebrew/bin',  # For macOS Homebrew
+                '/usr/local/opt/qemu/bin'  # Another common macOS path
+            ]
+            
+            # Add any additional paths from PATH environment
+            path_dirs = os.environ.get('PATH', '').split(os.pathsep)
+            search_paths = list(set(common_paths + path_dirs))
+            
+            found_arches = set()
+            for path in search_paths:
+                if os.path.exists(path):
+                    for file in os.listdir(path):
+                        if file.startswith('qemu-system-'):
+                            arch = file.replace('qemu-system-', '')
+                            # Only add if it's executable
+                            if os.access(os.path.join(path, file), os.X_OK):
+                                found_arches.add(arch)
+            
+            self.architectures = sorted(list(found_arches))
+            
+            if not self.architectures:
+                # Fallback: try to get architectures from help output
+                help_output = subprocess.run(['qemu-system-x86_64', '-machine', 'help'], 
+                                          capture_output=True, text=True)
+                if help_output.returncode == 0:
+                    # If we can run qemu-system-x86_64, we at least have x86_64
+                    self.architectures = ['x86_64']
+                    
+                    # Try some common architectures
+                    common_arches = ['aarch64', 'arm', 'riscv64', 'ppc64', 'sparc64']
+                    for arch in common_arches:
+                        try:
+                            result = subprocess.run([f'qemu-system-{arch}', '--version'], 
+                                                 capture_output=True, text=True)
+                            if result.returncode == 0:
+                                self.architectures.append(arch)
+                        except FileNotFoundError:
+                            continue
 
             # Check for SPICE support
             help_output = subprocess.run(['qemu-system-x86_64', '--help'], 
@@ -268,6 +301,14 @@ class QEMUCapabilities:
             kvm_output = subprocess.run(['qemu-system-x86_64', '-accel', 'help'], 
                                      capture_output=True, text=True)
             self.has_kvm = 'kvm' in kvm_output.stdout.lower()
+
+            # Additional check for KVM on Linux
+            if os.path.exists('/dev/kvm'):
+                try:
+                    os.access('/dev/kvm', os.R_OK | os.W_OK)
+                    self.has_kvm = True
+                except:
+                    pass
 
         except FileNotFoundError:
             self.error = "QEMU is not installed"
