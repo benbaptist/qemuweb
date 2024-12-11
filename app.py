@@ -278,10 +278,11 @@ class VMManager:
             logger.error(f"Failed to remove VM {name}: {str(e)}")
             return False
     
-    def start_vm(self, name: str) -> bool:
+    def start_vm(self, name: str) -> Tuple[bool, Optional[str]]:
+        """Start a VM and return success status and error message if any."""
         try:
             if name not in self.vms:
-                return False
+                return False, "VM not found"
                 
             config = self.vms[name]
             cmd = self.generate_qemu_command(config)
@@ -297,6 +298,13 @@ class VMManager:
                 universal_newlines=True
             )
             
+            # Check if the process started successfully
+            if process.poll() is not None:
+                error_msg = f"VM process failed to start with return code {process.returncode}"
+                logger.error(error_msg)
+                log_file.close()
+                return False, error_msg
+            
             self.processes[name] = process
             
             # Create a new stop event for this VM
@@ -311,10 +319,11 @@ class VMManager:
             self.monitor_threads[name] = monitor_thread
             monitor_thread.start()
             
-            return True
+            return True, None
         except Exception as e:
-            logger.error(f"Failed to start VM {name}: {str(e)}")
-            return False
+            error_msg = f"Failed to start VM {name}: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
     
     def _monitor_vm(self, vm_name: str, stop_event: threading.Event, log_file):
         process = self.processes.get(vm_name)
@@ -429,6 +438,14 @@ class VMManager:
             self.get_vm_status(name) for name in self.vms.keys()
         ]
 
+    def _setup_vm_logging(self, vm_name: str) -> tuple:
+        """Set up logging for a VM."""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_path = os.path.join(LOG_DIR, f'{vm_name}_{timestamp}.log')
+        log_file = open(log_path, 'w')
+        logger.info(f"VM {vm_name} logs will be written to {log_path}")
+        return log_file
+
 vm_manager = VMManager()
 
 @app.route('/')
@@ -453,8 +470,11 @@ def delete_vm(name):
 
 @app.route('/api/vms/<name>/start', methods=['POST'])
 def start_vm(name):
-    success = vm_manager.start_vm(name)
-    return jsonify({'success': success})
+    success, error = vm_manager.start_vm(name)
+    if success:
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False, 'error': error}), 400
 
 @app.route('/api/vms/<name>/stop', methods=['POST'])
 def stop_vm(name):

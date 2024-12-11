@@ -11,6 +11,37 @@
 <body class="bg-gray-100">
     {% raw %}
     <div id="app" class="min-h-screen">
+        <!-- Error Notification -->
+        <div v-if="errorMessage" 
+             class="fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded z-50 max-w-md"
+             role="alert">
+            <div class="flex items-center justify-between">
+                <div>
+                    <span class="font-bold">Error: </span>
+                    <span>{{ errorMessage }}</span>
+                </div>
+                <button @click="errorMessage = null" class="ml-4">
+                    <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Success Notification -->
+        <div v-if="successMessage"
+             class="fixed top-4 right-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded z-50 max-w-md"
+             role="alert">
+            <div class="flex items-center justify-between">
+                <span>{{ successMessage }}</span>
+                <button @click="successMessage = null" class="ml-4">
+                    <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
         <!-- Create VM Modal -->
         <div v-if="showCreateModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
             <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl">
@@ -394,6 +425,8 @@
                 showCreateModal: false,
                 showEditModal: false,
                 showFileBrowser: false,
+                errorMessage: null,
+                successMessage: null,
                 newVM: {
                     name: '',
                     cpu: 'qemu64',
@@ -418,6 +451,22 @@
                 this.fetchVMs();
             },
             methods: {
+                showError(message, duration = 5000) {
+                    this.errorMessage = message;
+                    if (duration > 0) {
+                        setTimeout(() => {
+                            this.errorMessage = null;
+                        }, duration);
+                    }
+                },
+                showSuccess(message, duration = 3000) {
+                    this.successMessage = message;
+                    if (duration > 0) {
+                        setTimeout(() => {
+                            this.successMessage = null;
+                        }, duration);
+                    }
+                },
                 async fetchVMs() {
                     try {
                         const response = await fetch('/api/vms');
@@ -450,11 +499,15 @@
                         });
                         const result = await response.json();
                         if (result.success) {
+                            this.showSuccess(`VM ${this.editingVM.name} updated successfully`);
                             this.showEditModal = false;
                             await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to update VM ${this.editingVM.name}`);
                         }
                     } catch (error) {
                         console.error('Error updating VM:', error);
+                        this.showError(`Failed to update VM: ${error.message}`);
                     }
                 },
                 addDisk() {
@@ -504,7 +557,109 @@
                     const i = Math.floor(Math.log(bytes) / Math.log(k));
                     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
                 },
-                // ... existing methods (startVM, stopVM, etc.) ...
+                async startVM(name) {
+                    try {
+                        const response = await fetch(`/api/vms/${name}/start`, {
+                            method: 'POST'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${name} started successfully`);
+                            await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to start VM ${name}`);
+                        }
+                    } catch (error) {
+                        console.error('Error starting VM:', error);
+                        this.showError(`Failed to start VM ${name}: ${error.message}`);
+                    }
+                },
+                async stopVM(name) {
+                    try {
+                        const response = await fetch(`/api/vms/${name}/stop`, {
+                            method: 'POST'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${name} stopped successfully`);
+                            await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to stop VM ${name}`);
+                        }
+                    } catch (error) {
+                        console.error('Error stopping VM:', error);
+                        this.showError(`Failed to stop VM ${name}: ${error.message}`);
+                    }
+                },
+                async deleteVM(name) {
+                    if (!confirm(`Are you sure you want to delete VM "${name}"?`)) {
+                        return;
+                    }
+                    try {
+                        const response = await fetch(`/api/vms/${name}`, {
+                            method: 'DELETE'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${name} deleted successfully`);
+                            if (this.selectedVM && this.selectedVM.name === name) {
+                                this.selectedVM = null;
+                            }
+                            await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to delete VM ${name}`);
+                        }
+                    } catch (error) {
+                        console.error('Error deleting VM:', error);
+                        this.showError(`Failed to delete VM ${name}: ${error.message}`);
+                    }
+                },
+                updateVMStatus(status) {
+                    const index = this.vms.findIndex(vm => vm.name === status.name);
+                    if (index !== -1) {
+                        this.vms.splice(index, 1, status);
+                        if (this.selectedVM && this.selectedVM.name === status.name) {
+                            this.selectedVM = status;
+                        }
+                    } else {
+                        this.vms.push(status);
+                    }
+                },
+                handleVMStopped(data) {
+                    this.fetchVMs();
+                },
+                async createVM() {
+                    try {
+                        const response = await fetch('/api/vms', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(this.newVM)
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${this.newVM.name} created successfully`);
+                            this.showCreateModal = false;
+                            await this.fetchVMs();
+                            // Reset form
+                            this.newVM = {
+                                name: '',
+                                cpu: 'qemu64',
+                                memory: 1024,
+                                disks: [],
+                                enable_kvm: false,
+                                headless: false,
+                                arch: 'x86_64'
+                            };
+                        } else {
+                            this.showError(result.error || 'Failed to create VM');
+                        }
+                    } catch (error) {
+                        console.error('Error creating VM:', error);
+                        this.showError(`Failed to create VM: ${error.message}`);
+                    }
+                }
             }
         });
     </script>
