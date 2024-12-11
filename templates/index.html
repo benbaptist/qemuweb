@@ -89,46 +89,152 @@
                         </svg>
                     </button>
                 </div>
+
+                <!-- QEMU Status Indicators -->
+                <div v-if="qemuCapabilities" class="mb-6">
+                    <div class="flex flex-wrap gap-2">
+                        <div class="text-sm px-3 py-1 rounded-full"
+                             :class="qemuCapabilities.available ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
+                            QEMU {{ qemuCapabilities.version || 'Not Available' }}
+                        </div>
+                        <div v-for="feature in ['kvm', 'spice']" :key="feature"
+                             class="text-sm px-3 py-1 rounded-full"
+                             :class="getFeatureStatus(feature).available ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'"
+                             :title="getFeatureStatus(feature).description">
+                            {{ getFeatureStatus(feature).label }}
+                        </div>
+                    </div>
+                    <div v-if="qemuCapabilities.architectures.length > 0" class="mt-2 text-sm text-gray-600">
+                        Available architectures: {{ qemuCapabilities.architectures.join(', ') }}
+                    </div>
+                </div>
                 
                 <form @submit.prevent="createVM" class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Name</label>
-                        <input v-model="newVM.name" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">CPU</label>
-                        <input v-model="newVM.cpu" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
-                        <input v-model.number="newVM.memory" type="number" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Disk Path</label>
-                        <input v-model="newVM.disk_path" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        <input v-model="newVM.name" type="text" required
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Architecture</label>
-                        <select v-model="newVM.arch" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                            <option value="x86_64">x86_64</option>
-                            <option value="aarch64">aarch64</option>
-                            <option value="arm">arm</option>
-                            <option value="riscv64">riscv64</option>
+                        <select v-model="newVM.arch" required
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option v-for="arch in updateArchitectureOptions()" 
+                                    :key="arch" 
+                                    :value="arch">{{ arch }}</option>
                         </select>
                     </div>
-                    <div class="flex items-center">
-                        <input v-model="newVM.enable_kvm" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                        <label class="ml-2 block text-sm text-gray-700">Enable KVM</label>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">CPU</label>
+                        <input v-model="newVM.cpu" type="text" required
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                     </div>
-                    <div class="flex items-center">
-                        <input v-model="newVM.headless" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                        <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
+                        <input v-model.number="newVM.memory" type="number" required
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                     </div>
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center" :class="{'opacity-50': !qemuCapabilities?.has_kvm}">
+                            <input v-model="newVM.enable_kvm" type="checkbox" 
+                                   :disabled="!qemuCapabilities?.has_kvm"
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">
+                                Enable KVM
+                                <span v-if="!qemuCapabilities?.has_kvm" class="text-yellow-600">(not available)</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center">
+                            <input v-model="newVM.headless" type="checkbox" 
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                        </div>
+                    </div>
+                    <div v-if="!newVM.headless" class="flex items-center space-x-4">
+                        <div class="flex items-center">
+                            <input v-model="newVM.display.type" type="radio" value="spice"
+                                   :disabled="!qemuCapabilities?.has_spice"
+                                   class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">
+                                SPICE
+                                <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center">
+                            <input v-model="newVM.display.type" type="radio" value="vnc"
+                                   class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">VNC</label>
+                        </div>
+                    </div>
+
+                    <!-- Storage Devices -->
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-medium">Storage Devices</h3>
+                            <button type="button" @click="addDisk" 
+                                    class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
+                                Add Device
+                            </button>
+                        </div>
+                        
+                        <div v-for="(disk, index) in newVM.disks" :key="index" class="border rounded-lg p-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Device Type</label>
+                                    <select v-model="disk.type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="hdd">Hard Disk</option>
+                                        <option value="cdrom">CD-ROM</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Interface</label>
+                                    <select v-model="disk.interface" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="virtio">VirtIO</option>
+                                        <option value="ide">IDE</option>
+                                        <option value="scsi">SCSI</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Path</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm">
+                                        <input v-model="disk.path" type="text" 
+                                               class="flex-1 rounded-l-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        <button type="button" @click="browseDisk(index)"
+                                                class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 hover:bg-gray-100">
+                                            Browse
+                                        </button>
+                                    </div>
+                                </div>
+                                <div v-if="disk.type === 'hdd'" class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Format</label>
+                                    <select v-model="disk.format" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="qcow2">QCOW2</option>
+                                        <option value="raw">Raw</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2 flex items-center justify-between">
+                                    <div class="flex items-center">
+                                        <input v-model="disk.readonly" type="checkbox" 
+                                               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        <label class="ml-2 block text-sm text-gray-700">Read-only</label>
+                                    </div>
+                                    <button type="button" @click="removeDisk(index)"
+                                            class="text-red-600 hover:text-red-700">
+                                        Remove
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="flex justify-end space-x-3 mt-6">
-                        <button type="button" @click="showCreateModal = false" class="bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300">
+                        <button type="button" @click="showCreateModal = false" 
+                                class="bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300">
                             Cancel
                         </button>
-                        <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+                        <button type="submit" 
+                                :disabled="!qemuCapabilities?.available"
+                                class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">
                             Create VM
                         </button>
                     </div>
@@ -507,6 +613,7 @@
                 showFileBrowser: false,
                 errorMessage: null,
                 successMessage: null,
+                qemuCapabilities: null,
                 newVM: {
                     name: '',
                     cpu: 'qemu64',
@@ -539,6 +646,7 @@
                 this.socket.on('vm_status', this.updateVMStatus);
                 this.socket.on('vm_stopped', this.handleVMStopped);
                 this.fetchVMs();
+                this.fetchQEMUCapabilities();
                 
                 // Listen for fullscreen changes
                 document.addEventListener('fullscreenchange', () => {
@@ -724,6 +832,21 @@
                     this.fetchVMs();
                 },
                 async createVM() {
+                    if (!this.qemuCapabilities?.available) {
+                        this.showError('Cannot create VM: QEMU is not available');
+                        return;
+                    }
+
+                    if (!this.qemuCapabilities.architectures.includes(this.newVM.arch)) {
+                        this.showError(`Selected architecture ${this.newVM.arch} is not available`);
+                        return;
+                    }
+
+                    // If KVM is requested but not available, show a warning
+                    if (this.newVM.enable_kvm && !this.qemuCapabilities.has_kvm) {
+                        this.showError('KVM is not available, VM will run without hardware acceleration');
+                    }
+
                     try {
                         const response = await fetch('/api/vms', {
                             method: 'POST',
@@ -746,13 +869,13 @@
                                 enable_kvm: false,
                                 headless: false,
                                 display: {
-                                    type: 'spice',
+                                    type: this.qemuCapabilities.has_spice ? 'spice' : 'vnc',
                                     port: null,
                                     websocket_port: null,
                                     address: '127.0.0.1',
                                     password: null
                                 },
-                                arch: 'x86_64'
+                                arch: this.qemuCapabilities.architectures[0] || 'x86_64'
                             };
                         } else {
                             this.showError(result.error || 'Failed to create VM');
@@ -836,6 +959,49 @@
                             Open Display
                         </button>
                     `;
+                },
+
+                async fetchQEMUCapabilities() {
+                    try {
+                        const response = await fetch('/api/qemu/capabilities');
+                        this.qemuCapabilities = await response.json();
+                        
+                        if (!this.qemuCapabilities.available) {
+                            this.showError(`QEMU is not available: ${this.qemuCapabilities.error}`, 0);  // 0 means don't auto-dismiss
+                        }
+                    } catch (error) {
+                        console.error('Error fetching QEMU capabilities:', error);
+                        this.showError('Failed to fetch QEMU capabilities');
+                    }
+                },
+
+                // Update the architecture selection in the create VM form
+                updateArchitectureOptions() {
+                    return this.qemuCapabilities?.architectures || ['x86_64'];
+                },
+
+                // Add warning badges for missing features
+                getFeatureStatus(feature) {
+                    switch (feature) {
+                        case 'kvm':
+                            return {
+                                available: this.qemuCapabilities?.has_kvm,
+                                label: 'KVM',
+                                description: this.qemuCapabilities?.has_kvm ? 
+                                    'Hardware acceleration available' : 
+                                    'No hardware acceleration available'
+                            };
+                        case 'spice':
+                            return {
+                                available: this.qemuCapabilities?.has_spice,
+                                label: 'SPICE',
+                                description: this.qemuCapabilities?.has_spice ?
+                                    'SPICE display protocol available' :
+                                    'SPICE not available, using VNC fallback'
+                            };
+                        default:
+                            return null;
+                    }
                 }
             },
             beforeDestroy() {

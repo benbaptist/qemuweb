@@ -226,6 +226,74 @@ def check_websockify_available():
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
 
+class QEMUCapabilities:
+    def __init__(self):
+        self.available = False
+        self.architectures = []
+        self.has_spice = False
+        self.has_kvm = False
+        self.version = None
+        self.error = None
+        self.detect_capabilities()
+
+    def detect_capabilities(self):
+        """Detect QEMU capabilities and available architectures."""
+        try:
+            # Check if QEMU is installed by running qemu-system-x86_64 --version
+            result = subprocess.run(['qemu-system-x86_64', '--version'], 
+                                 capture_output=True, text=True)
+            if result.returncode == 0:
+                self.available = True
+                self.version = result.stdout.split('\n')[0]
+            else:
+                self.error = "QEMU not found or not working properly"
+                return
+
+            # Detect available architectures by checking for qemu-system-* binaries
+            arch_binaries = subprocess.run(['which', '-a', 'qemu-system-*'], 
+                                        shell=True, capture_output=True, text=True)
+            if arch_binaries.returncode == 0:
+                for line in arch_binaries.stdout.splitlines():
+                    if line:
+                        arch = line.split('qemu-system-')[-1]
+                        if arch:
+                            self.architectures.append(arch)
+
+            # Check for SPICE support
+            help_output = subprocess.run(['qemu-system-x86_64', '--help'], 
+                                      capture_output=True, text=True)
+            self.has_spice = '-spice' in help_output.stdout
+
+            # Check for KVM support
+            kvm_output = subprocess.run(['qemu-system-x86_64', '-accel', 'help'], 
+                                     capture_output=True, text=True)
+            self.has_kvm = 'kvm' in kvm_output.stdout.lower()
+
+        except FileNotFoundError:
+            self.error = "QEMU is not installed"
+        except Exception as e:
+            self.error = f"Error detecting QEMU capabilities: {str(e)}"
+
+    def to_dict(self):
+        return {
+            'available': self.available,
+            'architectures': self.architectures,
+            'has_spice': self.has_spice,
+            'has_kvm': self.has_kvm,
+            'version': self.version,
+            'error': self.error
+        }
+
+# Initialize QEMU capabilities
+qemu_caps = QEMUCapabilities()
+if not qemu_caps.available:
+    logger.error(f"QEMU not available: {qemu_caps.error}")
+else:
+    logger.info(f"QEMU version: {qemu_caps.version}")
+    logger.info(f"Available architectures: {', '.join(qemu_caps.architectures)}")
+    logger.info(f"SPICE support: {'Yes' if qemu_caps.has_spice else 'No'}")
+    logger.info(f"KVM support: {'Yes' if qemu_caps.has_kvm else 'No'}")
+
 class VMManager:
     def __init__(self):
         self.vms: Dict[str, VMConfig] = {}
@@ -239,6 +307,13 @@ class VMManager:
         self.load_vm_configs()
 
     def generate_qemu_command(self, config: VMConfig) -> List[str]:
+        # Verify QEMU is available for this architecture
+        if not qemu_caps.available:
+            raise RuntimeError(f"QEMU is not available: {qemu_caps.error}")
+        
+        if config.arch not in qemu_caps.architectures:
+            raise RuntimeError(f"Architecture {config.arch} is not supported by this QEMU installation")
+
         cmd = [
             f"qemu-system-{config.arch}",
             "-machine", config.machine,
@@ -263,11 +338,16 @@ class VMManager:
             
             cmd.extend(["-drive", drive_args])
         
+        # Only add KVM if it's supported and requested
         if config.enable_kvm:
-            cmd.extend(["-enable-kvm"])
+            if not qemu_caps.has_kvm:
+                logger.warning(f"KVM requested for VM {config.name} but not available, continuing without KVM")
+            else:
+                cmd.extend(["-enable-kvm"])
             
         if not config.headless:
-            if config.display.type == "spice":
+            # Try SPICE first if requested and available
+            if config.display.type == "spice" and qemu_caps.has_spice:
                 if config.display.port is None:
                     success, port = find_free_port(SPICE_PORT_START, SPICE_PORT_RANGE)
                     if not success:
@@ -300,7 +380,13 @@ class VMManager:
                     "-device", "virtio-tablet-pci",
                     "-device", "virtio-keyboard-pci"
                 ])
-            else:  # VNC
+            else:  # Fallback to VNC
+                if config.display.type == "spice":
+                    logger.warning(f"SPICE requested for VM {config.name} but not available, falling back to VNC")
+                    config.display.type = "vnc"
+                    config.display.port = None
+                    self.save_vm_configs()
+
                 if config.display.port is None:
                     success, port = find_free_port(VNC_PORT_START, VNC_PORT_RANGE)
                     if not success:
@@ -690,6 +776,10 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     logger.info('Client disconnected')
+
+@app.route('/api/qemu/capabilities', methods=['GET'])
+def get_qemu_capabilities():
+    return jsonify(qemu_caps.to_dict())
 
 if __name__ == '__main__':
     logger.info(f"Starting web interface on {config['web_interface']['host']}:{config['web_interface']['port']}")
