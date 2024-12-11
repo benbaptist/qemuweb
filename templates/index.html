@@ -460,7 +460,7 @@
                                             :key="type" 
                                             :value="type">{{ type }}</option>
                                 </select>
-                                <input v-if="!getMachineTypes(editingVM.arch).includes(editingVM.machine)"
+                                <input v-if="shouldShowCustomMachineType(editingVM.machine, editingVM.arch)"
                                        v-model="editingVM.machine" 
                                        type="text"
                                        placeholder="Custom machine type"
@@ -1276,7 +1276,12 @@
 
                 shouldShowCustomCPUInput(cpu, arch) {
                     const models = this.qemuCapabilities?.cpu_models?.[arch] || [];
-                    return !models.includes(cpu) && cpu !== '';
+                    return cpu === '' || !models.includes(cpu);
+                },
+
+                shouldShowCustomMachineType(machine, arch) {
+                    const types = this.qemuCapabilities?.machine_types?.[arch] || [];
+                    return machine === '' || !types.includes(machine);
                 }
             },
             watch: {
