@@ -115,26 +115,22 @@ class DiskDevice:
 @dataclass
 class DisplayConfig:
     type: str = "spice"  # "spice" or "vnc"
-    port: Optional[int] = None
-    websocket_port: Optional[int] = None
     address: str = "127.0.0.1"
     password: Optional[str] = None
 
     def to_dict(self):
         return {
             "type": self.type,
-            "port": self.port,
-            "websocket_port": self.websocket_port,
             "address": self.address,
-            "password": self.password
+            "password": self.password,
+            "port": getattr(self, 'port', None),
+            "websocket_port": getattr(self, 'websocket_port', None)
         }
 
     @staticmethod
     def from_dict(data):
         return DisplayConfig(
             type=data.get("type", "spice"),
-            port=data.get("port"),
-            websocket_port=data.get("websocket_port"),
             address=data.get("address", "127.0.0.1"),
             password=data.get("password")
         )
@@ -389,22 +385,21 @@ class VMManager:
         if not config.headless:
             # Try SPICE first if requested and available
             if config.display.type == "spice" and qemu_caps.has_spice:
-                if config.display.port is None:
-                    success, port = find_free_port(SPICE_PORT_START, SPICE_PORT_RANGE)
-                    if not success:
-                        raise RuntimeError("No available SPICE ports found")
-                    config.display.port = port
-                    
-                    # Also allocate a WebSocket port
-                    success, ws_port = find_free_port(SPICE_WS_PORT_START, SPICE_PORT_RANGE)
-                    if not success:
-                        raise RuntimeError("No available WebSocket ports found")
-                    config.display.websocket_port = ws_port
-                    
-                    if not config.display.password:
-                        config.display.password = generate_random_password()
-                    
-                    self.save_vm_configs()
+                success, port = find_free_port(SPICE_PORT_START, SPICE_PORT_RANGE)
+                if not success:
+                    raise RuntimeError("No available SPICE ports found")
+                
+                # Store the runtime port in the display config
+                config.display.port = port
+                
+                # Also allocate a WebSocket port
+                success, ws_port = find_free_port(SPICE_WS_PORT_START, SPICE_PORT_RANGE)
+                if not success:
+                    raise RuntimeError("No available WebSocket ports found")
+                config.display.websocket_port = ws_port
+                
+                if not config.display.password:
+                    config.display.password = generate_random_password()
 
                 cmd.extend([
                     "-spice", 
@@ -425,17 +420,17 @@ class VMManager:
                 if config.display.type == "spice":
                     logger.warning(f"SPICE requested for VM {config.name} but not available, falling back to VNC")
                     config.display.type = "vnc"
-                    config.display.port = None
-                    self.save_vm_configs()
-
-                if config.display.port is None:
-                    success, port = find_free_port(VNC_PORT_START, VNC_PORT_RANGE)
-                    if not success:
-                        raise RuntimeError("No available VNC ports found")
-                    config.display.port = port
-                    self.save_vm_configs()
                 
-                cmd.extend(["-vnc", f":{config.display.port - VNC_PORT_START}"])
+                success, port = find_free_port(VNC_PORT_START, VNC_PORT_RANGE)
+                if not success:
+                    raise RuntimeError("No available VNC ports found")
+                
+                # Store the runtime port in the display config
+                config.display.port = port
+                
+                # Calculate VNC display number (port - 5900)
+                vnc_display = config.display.port - VNC_PORT_START
+                cmd.extend(["-vnc", f":{vnc_display}"])
         else:
             cmd.extend(["-nographic"])
             
@@ -445,13 +440,12 @@ class VMManager:
         return cmd
 
     def start_websocket_proxy(self, vm_name: str, config: VMConfig) -> bool:
-        """Start WebSocket proxy for either SPICE or VNC."""
         if not self.websockify_available:
             logger.warning(f"Cannot start WebSocket proxy for VM {vm_name}: websockify not installed")
             return False
 
         try:
-            if not config.display.port:
+            if not hasattr(config.display, 'port'):
                 logger.error(f"Missing port configuration for VM {vm_name}")
                 return False
 
@@ -461,12 +455,11 @@ class VMManager:
                 target_port = VNC_PORT_START + (config.display.port - VNC_PORT_START)
 
             # Allocate a WebSocket port if not already assigned
-            if not config.display.websocket_port:
+            if not hasattr(config.display, 'websocket_port'):
                 success, ws_port = find_free_port(SPICE_WS_PORT_START, SPICE_PORT_RANGE)
                 if not success:
                     raise RuntimeError("No available WebSocket ports found")
                 config.display.websocket_port = ws_port
-                self.save_vm_configs()
 
             proxy_cmd = [
                 "websockify",
@@ -704,6 +697,12 @@ class VMManager:
                 self.monitor_threads.pop(name, None)
                 self.stop_events.pop(name, None)
                 
+                # Clear runtime display ports
+                if name in self.vms and hasattr(self.vms[name].display, 'port'):
+                    delattr(self.vms[name].display, 'port')
+                if name in self.vms and hasattr(self.vms[name].display, 'websocket_port'):
+                    delattr(self.vms[name].display, 'websocket_port')
+
                 return True
             except subprocess.TimeoutExpired:
                 process.kill()
@@ -835,32 +834,39 @@ def handle_disconnect():
 def get_qemu_capabilities():
     return jsonify(qemu_caps.to_dict())
 
-@app.route('/novnc-bundle.js')
-def novnc_bundle():
-    novnc_dir = os.path.join(app.static_folder, 'novnc')
-    files = {
-        'browser.js': os.path.join(novnc_dir, 'browser.js'),
-        'logging.js': os.path.join(novnc_dir, 'logging.js'),
-        'events.js': os.path.join(novnc_dir, 'events.js'),
-        'base64.js': os.path.join(novnc_dir, 'base64.js'),
-        'websock.js': os.path.join(novnc_dir, 'websock.js'),
-        'rfb.js': os.path.join(novnc_dir, 'rfb.js')
-    }
-    
-    # Read all files
-    file_contents = {}
-    for name, path in files.items():
-        with open(path, 'r') as f:
-            file_contents[name] = f.read()
-    
-    # Render the bundle template
-    with open(os.path.join(novnc_dir, 'novnc-bundle.js'), 'r') as f:
-        template = f.read()
+@app.route('/api/vms/<name>/logs', methods=['GET'])
+def get_vm_logs(name):
+    try:
+        vm = vm_manager.vms.get(name)
+        if not vm:
+            return jsonify({'success': False, 'error': 'VM not found'}), 404
+
+        # Get the latest log file for this VM
+        log_files = sorted([f for f in os.listdir(LOG_DIR) 
+                          if f.startswith(f'{name}_')], reverse=True)
         
-    for name, content in file_contents.items():
-        template = template.replace(f"{{% include '{name}' %}}", content)
-    
-    return Response(template, mimetype='application/javascript')
+        if not log_files:
+            return jsonify({'success': True, 'logs': []})
+
+        latest_log = os.path.join(LOG_DIR, log_files[0])
+        
+        # Read the last 1000 lines (configurable)
+        try:
+            with open(latest_log, 'r') as f:
+                # Use deque with maxlen for memory efficiency
+                from collections import deque
+                lines = deque(f, 1000)
+                return jsonify({
+                    'success': True,
+                    'logs': list(lines)
+                })
+        except Exception as e:
+            logger.error(f"Error reading log file for VM {name}: {str(e)}")
+            return jsonify({'success': False, 'error': f'Error reading log file: {str(e)}'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error getting logs for VM {name}: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     logger.info(f"Starting web interface on {config['web_interface']['host']}:{config['web_interface']['port']}")

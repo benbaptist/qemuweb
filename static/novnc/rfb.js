@@ -1,6 +1,6 @@
 /*
  * noVNC: HTML5 VNC client
- * Copyright (C) 2020 The noVNC authors
+ * Copyright (C) 2020 The noVNC Authors
  * Licensed under MPL 2.0 (see LICENSE.txt)
  *
  * See README.md for usage and integration instructions.
@@ -10,7 +10,7 @@
 import { toUnsigned32bit, toSigned32bit } from './util/int.js';
 import * as Log from './util/logging.js';
 import { encodeUTF8, decodeUTF8 } from './util/strings.js';
-import { dragThreshold, supportsWebCodecsH264Decode } from './util/browser.js';
+import { dragThreshold } from './util/browser.js';
 import { clientToElement } from './util/element.js';
 import { setCapture } from './util/events.js';
 import EventTargetMixin from './util/eventtarget.js';
@@ -31,12 +31,10 @@ import RawDecoder from "./decoders/raw.js";
 import CopyRectDecoder from "./decoders/copyrect.js";
 import RREDecoder from "./decoders/rre.js";
 import HextileDecoder from "./decoders/hextile.js";
-import ZlibDecoder from './decoders/zlib.js';
 import TightDecoder from "./decoders/tight.js";
 import TightPNGDecoder from "./decoders/tightpng.js";
 import ZRLEDecoder from "./decoders/zrle.js";
 import JPEGDecoder from "./decoders/jpeg.js";
-import H264Decoder from "./decoders/h264.js";
 
 // How many seconds to wait for a disconnect to finish
 const DISCONNECT_TIMEOUT = 3;
@@ -246,12 +244,10 @@ export default class RFB extends EventTargetMixin {
         this._decoders[encodings.encodingCopyRect] = new CopyRectDecoder();
         this._decoders[encodings.encodingRRE] = new RREDecoder();
         this._decoders[encodings.encodingHextile] = new HextileDecoder();
-        this._decoders[encodings.encodingZlib] = new ZlibDecoder();
         this._decoders[encodings.encodingTight] = new TightDecoder();
         this._decoders[encodings.encodingTightPNG] = new TightPNGDecoder();
         this._decoders[encodings.encodingZRLE] = new ZRLEDecoder();
         this._decoders[encodings.encodingJPEG] = new JPEGDecoder();
-        this._decoders[encodings.encodingH264] = new H264Decoder();
 
         // NB: nothing that needs explicit teardown should be done
         // before this point, since this can throw an exception
@@ -1378,7 +1374,7 @@ export default class RFB extends EventTargetMixin {
         }
     }
 
-    // Message handlers
+    // Message Handlers
 
     _negotiateProtocolVersion() {
         if (this._sock.rQwait("version", 12)) {
@@ -2119,16 +2115,12 @@ export default class RFB extends EventTargetMixin {
         encs.push(encodings.encodingCopyRect);
         // Only supported with full depth support
         if (this._fbDepth == 24) {
-            if (supportsWebCodecsH264Decode) {
-                encs.push(encodings.encodingH264);
-            }
             encs.push(encodings.encodingTight);
             encs.push(encodings.encodingTightPNG);
             encs.push(encodings.encodingZRLE);
             encs.push(encodings.encodingJPEG);
             encs.push(encodings.encodingHextile);
             encs.push(encodings.encodingRRE);
-            encs.push(encodings.encodingZlib);
         }
         encs.push(encodings.encodingRaw);
 
@@ -2427,7 +2419,7 @@ export default class RFB extends EventTargetMixin {
 
         switch (xvpMsg) {
             case 0:  // XVP_FAIL
-                Log.Error("XVP operation failed");
+                Log.Error("XVP Operation Failed");
                 break;
             case 1:  // XVP_INIT
                 this._rfbXvpVer = xvpVer;
@@ -2756,7 +2748,7 @@ export default class RFB extends EventTargetMixin {
     }
 
     _handleLedEvent() {
-        if (this._sock.rQwait("LED status", 1)) {
+        if (this._sock.rQwait("LED Status", 1)) {
             return false;
         }
 

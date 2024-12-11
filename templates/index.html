@@ -9,8 +9,6 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
     <!-- SPICE Client Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/main.min.js"></script>
-    <!-- Local noVNC bundle -->
-    <script src="/novnc-bundle.js"></script>
     <style>
         .spice-display, .vnc-display {
             width: 100%;
@@ -75,7 +73,7 @@
                     <div class="flex flex-wrap gap-2">
                         <div class="text-sm px-3 py-1 rounded-full"
                              :class="qemuCapabilities.available ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
-                            QEMU {{ qemuCapabilities.version || 'Not Available' }}
+                            QEMU {{ qemuCapabilities.version?.replace('QEMU ', '') || 'Not Available' }}
                         </div>
                         <div v-for="feature in ['kvm', 'spice']" :key="feature"
                              class="text-sm px-3 py-1 rounded-full"
@@ -85,7 +83,7 @@
                         </div>
                     </div>
                     <div v-if="qemuCapabilities.architectures.length > 0" class="mt-2 text-sm text-gray-600">
-                        Available architectures: {{ qemuCapabilities.architectures.join(', ') }}
+                        <!-- Available architectures: {{ qemuCapabilities.architectures.join(', ') }} -->
                     </div>
                 </div>
                 
@@ -354,6 +352,31 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- VM Logs -->
+                        <div class="bg-white p-6 rounded-lg shadow-md">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-medium">VM Logs</h3>
+                                <button v-if="selectedVM.running" 
+                                        @click="refreshLogs"
+                                        class="text-indigo-600 hover:text-indigo-700">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                </button>
+                            </div>
+                            
+                            <div v-if="vmLogs && vmLogs.length > 0" 
+                                 class="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm overflow-auto max-h-96">
+                                <div v-for="(line, index) in vmLogs" 
+                                     :key="index" 
+                                     class="whitespace-pre-wrap">{{ line }}</div>
+                            </div>
+                            <div v-else class="text-gray-500 text-center py-4">
+                                No logs available{{ selectedVM.running ? ' yet' : '' }}
+                            </div>
+                        </div>
                     </div>
                     <div v-else class="flex items-center justify-center h-full text-gray-500">
                         Select a VM from the sidebar to view details
@@ -388,10 +411,9 @@
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Architecture</label>
                             <select v-model="editingVM.arch" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                                <option value="x86_64">x86_64</option>
-                                <option value="aarch64">aarch64</option>
-                                <option value="arm">arm</option>
-                                <option value="riscv64">riscv64</option>
+                                <option v-for="arch in updateArchitectureOptions()" 
+                                        :key="arch" 
+                                        :value="arch">{{ arch }}</option>
                             </select>
                         </div>
                         <div>
@@ -405,9 +427,50 @@
                             <input v-model="editingVM.enable_kvm" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
                             <label class="ml-2 block text-sm text-gray-700">Enable KVM</label>
                         </div>
+                    </div>
+
+                    <!-- Display Settings -->
+                    <div class="space-y-4">
                         <div class="flex items-center">
-                            <input v-model="editingVM.headless" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <input v-model="editingVM.headless" type="checkbox" 
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
                             <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                        </div>
+                        
+                        <div v-if="!editingVM.headless" class="space-y-4">
+                            <h3 class="text-lg font-medium">Display Settings</h3>
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center">
+                                    <input v-model="editingVM.display.type" type="radio" value="spice"
+                                           :disabled="!qemuCapabilities?.has_spice"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">
+                                        SPICE
+                                        <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
+                                    </label>
+                                </div>
+                                <div class="flex items-center">
+                                    <input v-model="editingVM.display.type" type="radio" value="vnc"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">VNC</label>
+                                </div>
+                            </div>
+                            
+                            <!-- Optional: Add display-specific settings -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Display Port</label>
+                                    <input v-model.number="editingVM.display.port" type="number"
+                                           placeholder="Auto-assign if empty"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Display Password</label>
+                                    <input v-model="editingVM.display.password" type="password"
+                                           placeholder="Optional"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -620,7 +683,9 @@
                 spiceConnection: null,
                 vncConnection: null,
                 showDisplayModal: false,
-                isFullscreen: false
+                isFullscreen: false,
+                vmLogs: null,
+                logRefreshInterval: null
             },
             mounted() {
                 this.socket = io();
@@ -667,9 +732,28 @@
                 },
                 editVM(vm) {
                     this.editingVM = JSON.parse(JSON.stringify(vm.config));
+                    
+                    // Initialize display settings if they don't exist
+                    if (!this.editingVM.display) {
+                        this.editingVM.display = {
+                            type: this.qemuCapabilities?.has_spice ? 'spice' : 'vnc',
+                            port: null,
+                            websocket_port: null,
+                            address: '127.0.0.1',
+                            password: null
+                        };
+                    }
+                    
+                    // Initialize disks array if it doesn't exist
                     if (!this.editingVM.disks) {
                         this.editingVM.disks = [];
                     }
+                    
+                    // Initialize headless mode if it doesn't exist
+                    if (typeof this.editingVM.headless === 'undefined') {
+                        this.editingVM.headless = false;
+                    }
+                    
                     this.showEditModal = true;
                 },
                 async saveVM() {
@@ -695,10 +779,11 @@
                     }
                 },
                 addDisk() {
-                    if (!this.editingVM.disks) {
-                        this.editingVM.disks = [];
+                    const vm = this.editingVM || this.newVM;  // Handle both edit and create cases
+                    if (!vm.disks) {
+                        vm.disks = [];
                     }
-                    this.editingVM.disks.push({
+                    vm.disks.push({
                         path: '',
                         type: 'hdd',
                         format: 'qcow2',
@@ -707,7 +792,8 @@
                     });
                 },
                 removeDisk(index) {
-                    this.editingVM.disks.splice(index, 1);
+                    const vm = this.editingVM || this.newVM;  // Handle both edit and create cases
+                    vm.disks.splice(index, 1);
                 },
                 async browseDisk(index) {
                     this.editingDiskIndex = index;
@@ -730,8 +816,14 @@
                     if (item.type === 'directory') {
                         this.loadFiles(item.path);
                     } else {
-                        this.editingVM.disks[this.editingDiskIndex].path = item.path;
-                        this.showFileBrowser = false;
+                        const vm = this.editingVM || this.newVM;  // Handle both edit and create cases
+                        if (vm && vm.disks) {
+                            vm.disks[this.editingDiskIndex].path = item.path;
+                            this.showFileBrowser = false;
+                        } else {
+                            console.error('No VM or disks array available');
+                            this.showError('Failed to set disk path: VM configuration not found');
+                        }
                     }
                 },
                 formatSize(bytes) {
@@ -972,28 +1064,33 @@
                             }
                         );
 
-                        // Add event listeners
-                        document.getElementById('display-area').addEventListener('connect', () => {
+                        this.vncConnection.addEventListener('connect', () => {
                             console.log('VNC connected');
                             this.showSuccess('VNC connection established');
                         });
 
-                        document.getElementById('display-area').addEventListener('disconnect', (e) => {
+                        this.vncConnection.addEventListener('disconnect', (e) => {
                             console.log('VNC disconnected:', e);
                             this.showError(`VNC disconnected: ${e.detail?.reason || 'Unknown reason'}`);
                         });
 
-                        document.getElementById('display-area').addEventListener('error', (e) => {
-                            console.log('VNC error:', e);
-                            this.showError(`VNC error: ${e.detail?.message || 'Unknown error'}`);
+                        this.vncConnection.addEventListener('securityfailure', (e) => {
+                            console.log('VNC security error:', e);
+                            this.showError(`VNC security error: ${e.detail?.reason || 'Authentication failed'}`);
                         });
 
                         // Handle canvas resize
                         const resizeObserver = new ResizeObserver(() => {
-                            if (this.vncConnection) {
+                            if (this.vncConnection && this.vncConnection._fbWidth > 0) {
                                 const container = document.getElementById('display-area');
-                                this.vncConnection.scaleViewport = true;
-                                this.vncConnection.scaleFactor = 1.0; // Auto-scale
+                                const scale = Math.min(
+                                    container.clientWidth / this.vncConnection._fbWidth,
+                                    container.clientHeight / this.vncConnection._fbHeight
+                                );
+                                if (scale > 0) {
+                                    this.vncConnection.scaleViewport = true;
+                                    this.vncConnection.scaleFactor = scale;
+                                }
                             }
                         });
                         resizeObserver.observe(document.getElementById('display-area'));
@@ -1041,11 +1138,66 @@
                     }
                 },
 
-                // ... rest of your existing methods ...
+                async fetchVMLogs(vmName) {
+                    try {
+                        const response = await fetch(`/api/vms/${vmName}/logs`);
+                        const data = await response.json();
+                        if (data.success) {
+                            this.vmLogs = data.logs;
+                        } else {
+                            console.error('Failed to fetch logs:', data.error);
+                        }
+                    } catch (error) {
+                        console.error('Error fetching VM logs:', error);
+                    }
+                },
+
+                refreshLogs() {
+                    if (this.selectedVM) {
+                        this.fetchVMLogs(this.selectedVM.name);
+                    }
+                },
+
+                // Modify the selectVM method to include log fetching
+                async selectVM(vm) {
+                    this.selectedVM = vm;
+                    if (vm) {
+                        // Clear existing refresh interval
+                        if (this.logRefreshInterval) {
+                            clearInterval(this.logRefreshInterval);
+                        }
+                        
+                        // Fetch logs immediately
+                        await this.fetchVMLogs(vm.name);
+                        
+                        // Set up automatic refresh if VM is running
+                        if (vm.running) {
+                            this.logRefreshInterval = setInterval(() => {
+                                this.fetchVMLogs(vm.name);
+                            }, 5000); // Refresh every 5 seconds
+                        }
+                    }
+                },
+
+                // Add cleanup to the beforeDestroy hook
+                beforeDestroy() {
+                    if (this.logRefreshInterval) {
+                        clearInterval(this.logRefreshInterval);
+                    }
+                }
             },
-            beforeDestroy() {
-                this.closeDisplay();
-                document.removeEventListener('fullscreenchange');
+            watch: {
+                'selectedVM.running': function(newVal, oldVal) {
+                    if (newVal === false && this.logRefreshInterval) {
+                        clearInterval(this.logRefreshInterval);
+                        this.logRefreshInterval = null;
+                    } else if (newVal === true && !this.logRefreshInterval) {
+                        this.fetchVMLogs(this.selectedVM.name);
+                        this.logRefreshInterval = setInterval(() => {
+                            this.fetchVMLogs(this.selectedVM.name);
+                        }, 5000);
+                    }
+                }
             }
         });
     </script>
