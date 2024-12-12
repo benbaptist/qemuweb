@@ -149,6 +149,11 @@ class VMConfig:
     name: str
     cpu: str = config['qemu']['default_cpu']
     memory: int = config['qemu']['default_memory']
+    cpu_cores: int = 1
+    cpu_threads: int = 1
+    network_type: str = "user"  # "user", "bridge", "none"
+    network_bridge: str = "virbr0"  # Default bridge device
+    rtc_base: str = "utc"  # "utc" or "localtime"
     disks: List[DiskDevice] = field(default_factory=list)
     enable_kvm: bool = False
     headless: bool = False
@@ -192,14 +197,28 @@ def generate_random_password(length: int = 12) -> str:
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
 
-def list_directory(path: str = "/") -> List[Dict]:
+def list_directory(path: str = None) -> List[Dict]:
     """List directory contents with file information."""
     try:
+        if path is None:
+            path = os.getcwd()  # Start in current directory
         path = os.path.abspath(path)
         if not os.path.exists(path):
             return []
 
         items = []
+        # Add parent directory entry if not at root
+        if path != '/':
+            parent_path = os.path.dirname(path)
+            items.append({
+                'name': '..',
+                'path': parent_path,
+                'type': 'directory',
+                'size': None,
+                'modified': None,
+                'is_parent': True  # Flag to identify parent directory
+            })
+
         for item in os.scandir(path):
             try:
                 is_dir = item.is_dir()
@@ -209,12 +228,13 @@ def list_directory(path: str = "/") -> List[Dict]:
                         'path': os.path.join(path, item.name),
                         'type': 'directory' if is_dir else 'file',
                         'size': item.stat().st_size if not is_dir else None,
-                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat()
+                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                        'is_parent': False
                     })
             except (PermissionError, OSError):
                 continue
 
-        return sorted(items, key=lambda x: (x['type'] == 'file', x['name'].lower()))
+        return sorted(items, key=lambda x: (not x.get('is_parent', False), x['type'] == 'file', x['name'].lower()))
     except Exception as e:
         logger.error(f"Error listing directory {path}: {str(e)}")
         return []
@@ -535,6 +555,22 @@ else:
     logger.info(f"SPICE support: {'Yes' if qemu_caps.has_spice else 'No'}")
     logger.info(f"KVM support: {'Yes' if qemu_caps.has_kvm else 'No'}")
 
+def get_process_cpu_usage(pid: int) -> float:
+    """Get CPU usage for a process and all its children."""
+    try:
+        parent = psutil.Process(pid)
+        # Get parent and all children processes
+        processes = [parent] + parent.children(recursive=True)
+        total_cpu = 0
+        for process in processes:
+            try:
+                total_cpu += process.cpu_percent(interval=None)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return total_cpu
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return 0.0
+
 class VMManager:
     def __init__(self):
         self.vms: Dict[str, VMConfig] = {}
@@ -546,6 +582,7 @@ class VMManager:
         if not self.websockify_available:
             logger.warning("websockify not found. Remote display support will be limited.")
         self.load_vm_configs()
+        self.cpu_stats = {}  # Store previous CPU times for calculation
 
     def generate_qemu_command(self, config: VMConfig) -> List[str]:
         # Verify QEMU is available for this architecture
@@ -559,8 +596,24 @@ class VMManager:
             f"qemu-system-{config.arch}",
             "-machine", config.machine,
             "-cpu", config.cpu,
-            "-m", str(config.memory)
+            "-smp", f"cores={config.cpu_cores},threads={config.cpu_threads}",
+            "-m", str(config.memory),
+            "-rtc", f"base={config.rtc_base}"
         ]
+        
+        # Add network configuration
+        if config.network_type == "none":
+            cmd.extend(["-net", "none"])
+        elif config.network_type == "bridge":
+            cmd.extend([
+                "-netdev", f"bridge,id=net0,br={config.network_bridge}",
+                "-device", "virtio-net-pci,netdev=net0"
+            ])
+        else:  # user networking (default)
+            cmd.extend([
+                "-netdev", "user,id=net0",
+                "-device", "virtio-net-pci,netdev=net0"
+            ])
         
         # Add disk devices
         for i, disk in enumerate(config.disks):
@@ -569,6 +622,20 @@ class VMManager:
                 if disk.readonly:
                     drive_args += ",readonly=on"
             else:
+                # For Windows XP, prefer IDE interface with simple configuration
+                if config.arch in ['x86_64', 'i386'] and disk.interface == 'ide':
+                    # Use legacy style for IDE drives
+                    if i == 0:
+                        cmd.extend(["-hda", disk.path])
+                    elif i == 1:
+                        cmd.extend(["-hdb", disk.path])
+                    elif i == 2:
+                        cmd.extend(["-hdc", disk.path])
+                    elif i == 3:
+                        cmd.extend(["-hdd", disk.path])
+                    continue  # Skip the -drive argument for IDE drives
+
+                # For all other cases, use the new -drive syntax
                 drive_args = f"file={disk.path},format={disk.format}"
                 if disk.interface == "virtio":
                     drive_args += ",if=virtio"
@@ -919,33 +986,40 @@ class VMManager:
                 return False
         return False
 
-    def get_vm_status(self, name: str) -> Optional[dict]:
-        if name not in self.vms:
+    def get_vm_status(self, name: str) -> Dict:
+        """Get current status of a VM."""
+        config = self.vms.get(name)
+        if not config:
             return None
-            
-        config = self.vms[name]
+
         process = self.processes.get(name)
-        
-        status = {
-            'name': name,
-            'config': config.to_dict(),
-            'running': False,
-            'display': config.display.to_dict() if not config.headless else None
-        }
-        
         if process:
             try:
-                cpu_percent = psutil.Process(process.pid).cpu_percent()
-                mem_info = psutil.Process(process.pid).memory_info()
-                status.update({
-                    'cpu_percent': cpu_percent,
-                    'memory_mb': mem_info.rss / (1024 * 1024),
-                    'running': True
-                })
-            except:
-                pass
-                
-        return status
+                cpu_usage = get_process_cpu_usage(process.pid)
+                return {
+                    'name': name,
+                    'running': True,
+                    'cpu_usage': cpu_usage,
+                    'config': config,
+                    'display': config.display.to_dict() if hasattr(config, 'display') else None
+                }
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                # Process died or can't access it
+                self.processes.pop(name, None)
+                return {
+                    'name': name,
+                    'running': False,
+                    'cpu_usage': 0,
+                    'config': config,
+                    'display': None
+                }
+        return {
+            'name': name,
+            'running': False,
+            'cpu_usage': 0,
+            'config': config,
+            'display': None
+        }
 
     def get_all_vms(self) -> List[dict]:
         return [
