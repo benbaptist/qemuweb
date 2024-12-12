@@ -2,6 +2,8 @@
 - [ ] noVNC still needs to be implemented
 - [ ] SPICE needs to be fully implemented
 - [ ] Thumbnail for running VM if available
+    - [ ] Fetch every 10 seconds using whatever method is available
+    - [ ] If headless is enabled, generate an image of the serial console
 - [ ] Once SPICE is implemented
     - [ ] Game Controller support, via mapping mouse and keyboard and via direct gamepad passthrough
     - [ ] Audio support
