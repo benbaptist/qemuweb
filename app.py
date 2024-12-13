@@ -125,23 +125,31 @@ class DisplayConfig:
     type: str = "spice"  # "spice" or "vnc"
     address: str = "127.0.0.1"
     password: Optional[str] = None
+    port: Optional[int] = None  # Add explicit port field
+    websocket_port: Optional[int] = None  # Add explicit websocket_port field
 
     def to_dict(self):
         return {
             "type": self.type,
             "address": self.address,
             "password": self.password,
-            "port": getattr(self, 'port', None),
-            "websocket_port": getattr(self, 'websocket_port', None)
+            "port": self.port,  # Include port in serialization
+            "websocket_port": self.websocket_port  # Include websocket_port in serialization
         }
 
     @staticmethod
     def from_dict(data):
-        return DisplayConfig(
+        display = DisplayConfig(
             type=data.get("type", "spice"),
             address=data.get("address", "127.0.0.1"),
             password=data.get("password")
         )
+        # Explicitly set port and websocket_port if they exist
+        if "port" in data:
+            display.port = int(data["port"]) if data["port"] else None
+        if "websocket_port" in data:
+            display.websocket_port = int(data["websocket_port"]) if data["websocket_port"] else None
+        return display
 
 @dataclass_json
 @dataclass
@@ -692,9 +700,22 @@ class VMManager:
                     logger.warning(f"SPICE requested for VM {config.name} but not available, falling back to VNC")
                     config.display.type = "vnc"
                 
-                success, port = find_free_port(VNC_PORT_START, VNC_PORT_RANGE)
-                if not success:
-                    raise RuntimeError("No available VNC ports found")
+                # Use manually configured port if available, otherwise find a free one
+                if hasattr(config.display, 'port') and config.display.port:
+                    port = config.display.port
+                    # Verify the port is available
+                    try:
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.bind(('127.0.0.1', port))
+                    except socket.error:
+                        logger.warning(f"Configured VNC port {port} is not available, finding a new port")
+                        success, port = find_free_port(VNC_PORT_START, VNC_PORT_RANGE)
+                        if not success:
+                            raise RuntimeError("No available VNC ports found")
+                else:
+                    success, port = find_free_port(VNC_PORT_START, VNC_PORT_RANGE)
+                    if not success:
+                        raise RuntimeError("No available VNC ports found")
                 
                 # Store the runtime port in the display config
                 config.display.port = port
@@ -719,7 +740,7 @@ class VMManager:
             return False
 
         try:
-            if not hasattr(config.display, 'port'):
+            if not hasattr(config.display, 'port') or config.display.port is None:
                 logger.error(f"Missing port configuration for VM {vm_name}")
                 return False
 
@@ -728,18 +749,24 @@ class VMManager:
             if config.display.type == "vnc":
                 target_port = VNC_PORT_START + (config.display.port - VNC_PORT_START)
 
-            # Allocate a WebSocket port if not already assigned
-            if not hasattr(config.display, 'websocket_port'):
-                success, ws_port = find_free_port(SPICE_WS_PORT_START, SPICE_PORT_RANGE)
-                if not success:
-                    raise RuntimeError("No available WebSocket ports found")
-                config.display.websocket_port = ws_port
+            # Always allocate a new websocket port for this session
+            success, ws_port = find_free_port(SPICE_WS_PORT_START, SPICE_PORT_RANGE)
+            if not success:
+                raise RuntimeError("No available WebSocket ports found")
+            config.display.websocket_port = ws_port
 
+            if config.display.websocket_port is None:
+                logger.error(f"Failed to allocate websocket port for VM {vm_name}")
+                return False
+
+            # Convert ports to strings and ensure proper formatting
             proxy_cmd = [
                 "websockify",
-                str(config.display.websocket_port),
-                f"{config.display.address}:{target_port}"
+                str(config.display.websocket_port),  # Convert websocket port to string
+                f"{config.display.address}:{target_port}"  # Format target as host:port
             ]
+
+            logger.debug(f"Starting WebSocket proxy with command: {' '.join(proxy_cmd)}")
             
             process = subprocess.Popen(
                 proxy_cmd,
@@ -888,8 +915,11 @@ class VMManager:
         process = self.processes.get(vm_name)
         if not process:
             return
-            
+        
         try:
+            # Initialize psutil Process object
+            p = psutil.Process(process.pid)
+            
             while not stop_event.is_set():
                 if process.poll() is not None:
                     logger.info(f"VM {vm_name} has stopped with return code {process.returncode}")
@@ -907,12 +937,39 @@ class VMManager:
                     break
                     
                 try:
-                    cpu_percent = psutil.Process(process.pid).cpu_percent()
-                    mem_info = psutil.Process(process.pid).memory_info()
+                    # Get CPU usage for the main process and all children
+                    cpu_percent = 0
+                    try:
+                        # Get all child processes
+                        children = p.children(recursive=True)
+                        # Sum CPU usage from main process and all children
+                        cpu_percent = p.cpu_percent(interval=None)
+                        for child in children:
+                            try:
+                                cpu_percent += child.cpu_percent(interval=None)
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        cpu_percent = 0
+
+                    # Get memory info
+                    try:
+                        mem_info = p.memory_info()
+                        # Also sum memory from child processes
+                        for child in p.children(recursive=True):
+                            try:
+                                mem_info = psutil.pmem(
+                                    mem_info.rss + child.memory_info().rss,
+                                    mem_info.vms + child.memory_info().vms
+                                )
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        mem_info = psutil.pmem(0, 0)
                     
                     status = {
                         'name': vm_name,
-                        'cpu_percent': cpu_percent,
+                        'cpu_usage': cpu_percent,
                         'memory_mb': mem_info.rss / (1024 * 1024),
                         'running': True,
                         'config': self.vms[vm_name].to_dict(),
@@ -971,11 +1028,20 @@ class VMManager:
                 self.monitor_threads.pop(name, None)
                 self.stop_events.pop(name, None)
                 
-                # Clear runtime display ports
-                if name in self.vms and hasattr(self.vms[name].display, 'port'):
-                    delattr(self.vms[name].display, 'port')
-                if name in self.vms and hasattr(self.vms[name].display, 'websocket_port'):
-                    delattr(self.vms[name].display, 'websocket_port')
+                # Only clear runtime display ports if they weren't manually configured
+                if name in self.vms:
+                    config = self.vms[name]
+                    # For VNC, keep manually configured ports
+                    if config.display.type == 'vnc' and hasattr(config.display, 'port'):
+                        # Keep the port configuration
+                        pass
+                    else:
+                        # Clear runtime ports for SPICE or auto-assigned VNC ports
+                        if hasattr(config.display, 'port'):
+                            delattr(config.display, 'port')
+                    # Always clear websocket port as it's runtime-only
+                    if hasattr(config.display, 'websocket_port'):
+                        delattr(config.display, 'websocket_port')
 
                 return True
             except subprocess.TimeoutExpired:
@@ -1095,6 +1161,11 @@ def update_vm(name):
         config = VMConfig.from_dict(request.json)
         if config.name != name:
             return jsonify({'success': False, 'error': 'VM name cannot be changed'}), 400
+            
+        # Ensure display configuration is properly handled
+        if hasattr(config.display, 'port') and config.display.port:
+            # Convert port to int if it's a string
+            config.display.port = int(config.display.port)
             
         vm_manager.vms[name] = config
         vm_manager.save_vm_configs()
