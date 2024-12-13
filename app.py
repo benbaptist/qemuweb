@@ -18,6 +18,12 @@ from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 from pathlib import Path
 import time
+from vnc_client import VNCClient
+import base64
+import cv2
+import numpy as np
+from io import BytesIO
+from PIL import Image
 
 # Load configuration
 CONFIG_FILE = 'config.json'
@@ -1100,7 +1106,118 @@ class VMManager:
         logger.info(f"VM {vm_name} logs will be written to {log_path}")
         return log_file
 
+class DisplayManager:
+    def __init__(self):
+        self.clients = {}  # Dictionary to store VNC clients by VM name
+        self.frame_interval = 1/30  # 30 FPS target
+
+    def connect_vnc(self, vm_name, host, port, password=None):
+        try:
+            client = VNCClient(host, port, password)
+            self.clients[vm_name] = {
+                'client': client,
+                'last_frame_time': 0
+            }
+            return True
+        except Exception as e:
+            logger.error(f"Failed to connect VNC for VM {vm_name}: {str(e)}")
+            return False
+
+    def disconnect_vnc(self, vm_name):
+        if vm_name in self.clients:
+            try:
+                self.clients[vm_name]['client'].disconnect()
+            except:
+                pass
+            del self.clients[vm_name]
+
+    def get_frame(self, vm_name):
+        if vm_name not in self.clients:
+            return None
+
+        try:
+            client = self.clients[vm_name]['client']
+            frame = client.get_frame()
+            
+            # Convert frame to JPEG
+            success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if not success:
+                return None
+            
+            return base64.b64encode(buffer).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Error getting frame for VM {vm_name}: {str(e)}")
+            return None
+
+    def send_key_event(self, vm_name, key_code, down):
+        if vm_name in self.clients:
+            try:
+                self.clients[vm_name]['client'].send_key(key_code, down)
+            except Exception as e:
+                logger.error(f"Error sending key event for VM {vm_name}: {str(e)}")
+
+    def send_pointer_event(self, vm_name, x, y, button_mask):
+        if vm_name in self.clients:
+            try:
+                self.clients[vm_name]['client'].send_pointer(x, y, button_mask)
+            except Exception as e:
+                logger.error(f"Error sending pointer event for VM {vm_name}: {str(e)}")
+
+
+# Initialize managers
+display_manager = DisplayManager()
 vm_manager = VMManager()
+
+# Add SocketIO event handlers
+@socketio.on('connect_display')
+def handle_connect_display(data):
+    vm_name = data['vm_name']
+    vm = vm_manager.vms.get(vm_name)
+    if not vm:
+        return {'success': False, 'error': 'VM not found'}
+
+    if not vm.running:
+        return {'success': False, 'error': 'VM is not running'}
+
+    success = display_manager.connect_vnc(
+        vm_name, 
+        'localhost', 
+        vm.display.port,
+        vm.display.password
+    )
+
+    if success:
+        # Start frame sending loop for this client
+        def send_frames():
+            while True:
+                frame = display_manager.get_frame(vm_name)
+                if frame:
+                    emit('frame', {'vm_name': vm_name, 'frame': frame})
+                eventlet.sleep(display_manager.frame_interval)
+
+        eventlet.spawn(send_frames)
+        return {'success': True}
+    return {'success': False, 'error': 'Failed to connect to display'}
+
+@socketio.on('disconnect_display')
+def handle_disconnect_display(data):
+    vm_name = data['vm_name']
+    display_manager.disconnect_vnc(vm_name)
+
+@socketio.on('key_event')
+def handle_key_event(data):
+    vm_name = data['vm_name']
+    key_code = data['key_code']
+    down = data['down']
+    display_manager.send_key_event(vm_name, key_code, down)
+
+@socketio.on('pointer_event')
+def handle_pointer_event(data):
+    vm_name = data['vm_name']
+    x = data['x']
+    y = data['y']
+    button_mask = data['button_mask']
+    display_manager.send_pointer_event(vm_name, x, y, button_mask)
 
 @app.route('/')
 def index():

@@ -7,15 +7,13 @@
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
-    <!-- SPICE Client Dependencies -->
-    <script src="https://cdn.jsdelivr.net/npm/spice-html5@0.2.1/src/main.min.js"></script>
     <style>
-        .spice-display, .vnc-display {
+        .vm-display {
             width: 100%;
             height: 100%;
             background-color: black;
         }
-        .spice-display canvas, .vnc-display canvas {
+        .vm-display canvas {
             width: 100%;
             height: 100%;
             object-fit: contain;
@@ -746,7 +744,7 @@
                     <div class="flex items-center space-x-4">
                         <button @click="toggleFullscreen" class="text-gray-600 hover:text-gray-800">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path v-if="isFullscreen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20H5a2 2 0 01-2-2v-4m0 0l5-5m-5 5h4m5 5v4a2 2 0 01-2 2h-4m0 0l5-5m-5 5v-4"/>
+                                <path v-if="isFullscreen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20H5a2 2 0 01-2-2v-4m0 0l5-5m-5 5h4m5 5v4a2 2 0 01-2 2h-4m0 0l5-5m-5 5v-4m0 4h-4"/>
                                 <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
                             </svg>
                         </button>
@@ -822,8 +820,9 @@
                 vncConnection: null,
                 showDisplayModal: false,
                 isFullscreen: false,
-                vmLogs: null,
-                logRefreshInterval: null
+                vmLogs: [],
+                logRefreshInterval: null,
+                displayConnection: null
             },
             mounted() {
                 this.socket = io();
@@ -838,6 +837,15 @@
                 });
             },
             created() {
+                this.socket = io();
+                this.socket.on('connect', () => {
+                    console.log('Connected to server');
+                });
+                this.socket.on('disconnect', () => {
+                    console.log('Disconnected from server');
+                });
+                this.fetchQEMUCapabilities();
+                
                 // Debounced versions of the getter methods
                 this.debouncedGetCPUModels = this.debounce(this._getCPUModels, 300);
                 this.debouncedGetMachineTypes = this.debounce(this._getMachineTypes, 300);
@@ -1171,13 +1179,26 @@
                     }
                 },
                 sendCtrlAltDel() {
-                    if (this.spiceConnection) {
-                        this.spiceConnection.sendCtrlAltDel();
-                        this.showSuccess('Sent Ctrl+Alt+Del');
-                    } else if (this.vncConnection) {
-                        this.vncConnection.sendCtrlAltDel();
+                    if (this.displayConnection) {
+                        this.socket.emit('key_event', {
+                            vm_name: this.selectedVM.name,
+                            key_code: 'ctrl_alt_del',
+                            down: true
+                        });
                         this.showSuccess('Sent Ctrl+Alt+Del');
                     }
+                },
+                closeDisplay() {
+                    if (this.displayConnection) {
+                        this.socket.emit('disconnect_display', { 
+                            vm_name: this.selectedVM.name 
+                        });
+                        if (this.displayConnection.canvas) {
+                            this.displayConnection.canvas.remove();
+                        }
+                        this.displayConnection = null;
+                    }
+                    this.showDisplayModal = false;
                 },
                 async openDisplay(vm) {
                     if (!vm.running) {
@@ -1191,117 +1212,92 @@
                     const displayArea = document.getElementById('display-area');
                     displayArea.innerHTML = '';
 
-                    if (vm.display.type === 'spice') {
-                        this.connectSpice(vm);
-                    } else {
-                        this.connectVNC(vm);
-                    }
-                },
-
-                connectVNC(vm) {
-                    try {
-                        if (!window.RFB) {
-                            throw new Error("noVNC RFB constructor not available");
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'vm-display';
+                    displayArea.appendChild(canvas);
+                    
+                    // Connect to display
+                    this.socket.emit('connect_display', { vm_name: vm.name }, (response) => {
+                        if (!response.success) {
+                            this.showError(response.error || 'Failed to connect to display');
+                            return;
                         }
+                        this.showSuccess('Connected to display');
+                    });
 
-                        // Calculate the websocket URL
-                        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                        const wsPort = vm.display.websocket_port || (vm.display.port + 5700);
-                        const wsUrl = `${wsProtocol}//${window.location.hostname}:${wsPort}`;
+                    // Handle incoming frames
+                    this.socket.on('frame', (data) => {
+                        if (data.vm_name === vm.name) {
+                            const img = new Image();
+                            img.onload = () => {
+                                canvas.width = img.width;
+                                canvas.height = img.height;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(img, 0, 0);
+                            };
+                            img.src = 'data:image/jpeg;base64,' + data.frame;
+                        }
+                    });
 
-                        console.log('Connecting to VNC at:', wsUrl);
-
-                        // Initialize noVNC
-                        this.vncConnection = new window.RFB(
-                            document.getElementById('display-area'),
-                            wsUrl,
-                            {
-                                credentials: { password: vm.display.password },
-                                shared: true,
-                                repeaterID: '',
-                                showDotCursor: true,
-                                background: '#000000',
-                                qualityLevel: 6,
-                                compressionLevel: 2,
-                                scaleViewport: true,
-                                clipViewport: true,
-                            }
-                        );
-
-                        this.vncConnection.addEventListener('connect', () => {
-                            console.log('VNC connected');
-                            this.showSuccess('VNC connection established');
+                    // Handle input events
+                    canvas.addEventListener('mousedown', (e) => {
+                        const rect = canvas.getBoundingClientRect();
+                        const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                        const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                        this.socket.emit('pointer_event', {
+                            vm_name: vm.name,
+                            x: Math.round(x),
+                            y: Math.round(y),
+                            button_mask: 1 << (e.button)
                         });
+                    });
 
-                        this.vncConnection.addEventListener('disconnect', (e) => {
-                            console.log('VNC disconnected:', e);
-                            this.showError(`VNC disconnected: ${e.detail?.reason || 'Unknown reason'}`);
+                    canvas.addEventListener('mousemove', (e) => {
+                        const rect = canvas.getBoundingClientRect();
+                        const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                        const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                        this.socket.emit('pointer_event', {
+                            vm_name: vm.name,
+                            x: Math.round(x),
+                            y: Math.round(y),
+                            button_mask: e.buttons
                         });
+                    });
 
-                        this.vncConnection.addEventListener('securityfailure', (e) => {
-                            console.log('VNC security error:', e);
-                            this.showError(`VNC security error: ${e.detail?.reason || 'Authentication failed'}`);
-                        });
-
-                        // Handle canvas resize
-                        const resizeObserver = new ResizeObserver(() => {
-                            if (this.vncConnection && this.vncConnection._fbWidth > 0) {
-                                const container = document.getElementById('display-area');
-                                const scale = Math.min(
-                                    container.clientWidth / this.vncConnection._fbWidth,
-                                    container.clientHeight / this.vncConnection._fbHeight
-                                );
-                                if (scale > 0) {
-                                    this.vncConnection.scaleViewport = true;
-                                    this.vncConnection.scaleFactor = scale;
-                                }
-                            }
-                        });
-                        resizeObserver.observe(document.getElementById('display-area'));
-
-                    } catch (e) {
-                        console.error('Failed to create VNC connection:', e);
-                        this.showError(`Failed to create VNC connection: ${e.message}`);
-                    }
+                    // Store canvas reference
+                    this.displayConnection = { canvas };
                 },
-
-                closeDisplay() {
-                    if (this.spiceConnection) {
-                        this.spiceConnection.stop();
-                        this.spiceConnection = null;
-                    }
-                    if (this.vncConnection) {
-                        this.vncConnection.disconnect();
-                        this.vncConnection = null;
-                    }
-                    this.showDisplayModal = false;
+                _getCPUModels(arch) {
+                    console.log(`Attempting to get CPU models for ${arch}`);
+                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
                 },
-
-                connectSpice(vm) {
-                    try {
-                        const uri = `ws://${window.location.hostname}:${vm.display.websocket_port}`;
-                        const password = vm.display.password;
-
-                        console.log('Connecting to SPICE at:', uri);
-
-                        this.spiceConnection = new window.SpiceMainConn({
-                            uri: uri,
-                            screen_id: 'display-area',
-                            password: password,
-                            onerror: (e) => {
-                                console.error('SPICE error:', e);
-                                this.showError(`SPICE connection error: ${e.message || 'Unknown error'}`);
-                            },
-                            onsuccess: () => {
-                                this.showSuccess('SPICE connection established');
-                            }
-                        });
-                    } catch (e) {
-                        console.error('Failed to create SPICE connection:', e);
-                        this.showError(`Failed to create SPICE connection: ${e.message}`);
-                    }
+                getCPUModels(arch) {
+                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
                 },
-
+                _getMachineTypes(arch) {
+                    console.log(`Attempting to get machine types for ${arch}`);
+                    return this.qemuCapabilities?.machine_types?.[arch] || [];
+                },
+                getMachineTypes(arch) {
+                    return this.qemuCapabilities?.machine_types?.[arch] || [];
+                },
+                debounce(fn, delay) {
+                    let timeoutID = null;
+                    return function (...args) {
+                        clearTimeout(timeoutID);
+                        timeoutID = setTimeout(() => {
+                            fn.apply(this, args);
+                        }, delay);
+                    };
+                },
+                shouldShowCustomCPUInput(cpu, arch) {
+                    const models = this.qemuCapabilities?.cpu_models?.[arch] || [];
+                    return cpu === '' || !models.includes(cpu);
+                },
+                shouldShowCustomMachineType(machine, arch) {
+                    const types = this.qemuCapabilities?.machine_types?.[arch] || [];
+                    return machine === '' || !types.includes(machine);
+                },
                 async fetchVMLogs(vmName) {
                     try {
                         const response = await fetch(`/api/vms/${vmName}/logs`);
@@ -1315,14 +1311,11 @@
                         console.error('Error fetching VM logs:', error);
                     }
                 },
-
                 refreshLogs() {
                     if (this.selectedVM) {
                         this.fetchVMLogs(this.selectedVM.name);
                     }
                 },
-
-                // Modify the selectVM method to include log fetching
                 async selectVM(vm) {
                     this.selectedVM = vm;
                     if (vm) {
@@ -1342,51 +1335,12 @@
                         }
                     }
                 },
-
                 // Add cleanup to the beforeDestroy hook
                 beforeDestroy() {
                     if (this.logRefreshInterval) {
                         clearInterval(this.logRefreshInterval);
                     }
                 },
-
-                _getCPUModels(arch) {
-                    console.log(`Attempting to get CPU models for ${arch}`);
-                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
-                },
-
-                getCPUModels(arch) {
-                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
-                },
-
-                _getMachineTypes(arch) {
-                    console.log(`Attempting to get machine types for ${arch}`);
-                    return this.qemuCapabilities?.machine_types?.[arch] || [];
-                },
-
-                getMachineTypes(arch) {
-                    return this.qemuCapabilities?.machine_types?.[arch] || [];
-                },
-
-                debounce(fn, delay) {
-                    let timeoutID = null;
-                    return function (...args) {
-                        clearTimeout(timeoutID);
-                        timeoutID = setTimeout(() => {
-                            fn.apply(this, args);
-                        }, delay);
-                    };
-                },
-
-                shouldShowCustomCPUInput(cpu, arch) {
-                    const models = this.qemuCapabilities?.cpu_models?.[arch] || [];
-                    return cpu === '' || !models.includes(cpu);
-                },
-
-                shouldShowCustomMachineType(machine, arch) {
-                    const types = this.qemuCapabilities?.machine_types?.[arch] || [];
-                    return machine === '' || !types.includes(machine);
-                }
             },
             watch: {
                 'selectedVM.running': function(newVal, oldVal) {
