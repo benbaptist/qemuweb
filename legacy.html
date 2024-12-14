@@ -1,0 +1,1386 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QEMU Web Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <style>
+        .vm-display {
+            width: 100%;
+            height: 100%;
+            background-color: black;
+        }
+        .vm-display canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    
+    <div id="app" class="min-h-screen">
+        <!-- Error Notification -->
+        <div v-if="errorMessage" 
+             class="fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded z-50 max-w-md"
+             role="alert">
+            <div class="flex items-center justify-between">
+                <div>
+                    <span class="font-bold">Error: </span>
+                    <span>{{ errorMessage }}</span>
+                </div>
+                <button @click="errorMessage = null" class="ml-4">
+                    <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Success Notification -->
+        <div v-if="successMessage"
+             class="fixed top-4 right-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded z-50 max-w-md"
+             role="alert">
+            <div class="flex items-center justify-between">
+                <span>{{ successMessage }}</span>
+                <button @click="successMessage = null" class="ml-4">
+                    <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Create VM Modal -->
+        <div v-if="showCreateModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">Create New VM</h2>
+                    <button @click="showCreateModal = false" class="text-gray-600 hover:text-gray-800">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- QEMU Status Indicators -->
+                <div v-if="qemuCapabilities" class="mb-6">
+                    <div class="flex flex-wrap gap-2">
+                        <div class="text-sm px-3 py-1 rounded-full"
+                             :class="qemuCapabilities.available ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
+                            QEMU {{ qemuCapabilities.version?.replace('QEMU ', '') || 'Not Available' }}
+                        </div>
+                        <div v-for="feature in ['kvm', 'spice']" :key="feature"
+                             class="text-sm px-3 py-1 rounded-full"
+                             :class="getFeatureStatus(feature).available ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'"
+                             :title="getFeatureStatus(feature).description">
+                            {{ getFeatureStatus(feature).label }}
+                        </div>
+                    </div>
+                    <div v-if="qemuCapabilities.architectures.length > 0" class="mt-2 text-sm text-gray-600">
+                        <!-- Available architectures: {{ qemuCapabilities.architectures.join(', ') }} -->
+                    </div>
+                </div>
+                
+                <form @submit.prevent="createVM" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Name</label>
+                        <input v-model="newVM.name" type="text" required
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Architecture</label>
+                        <select v-model="newVM.arch" required
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option v-for="arch in updateArchitectureOptions()" 
+                                    :key="arch" 
+                                    :value="arch">{{ arch }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">CPU Model</label>
+                        <div class="mt-1 flex space-x-2">
+                            <select v-model="newVM.cpu" 
+                                    class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="">Custom...</option>
+                                <option v-for="model in getCPUModels(newVM.arch)" 
+                                        :key="model" 
+                                        :value="model">{{ model }}</option>
+                            </select>
+                            <input v-if="shouldShowCustomCPUInput(newVM.cpu, newVM.arch)"
+                                   v-model="newVM.cpu" 
+                                   type="text"
+                                   placeholder="Custom CPU model"
+                                   class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Cores</label>
+                            <input v-model.number="newVM.cpu_cores" type="number" min="1"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Threads per Core</label>
+                            <input v-model.number="newVM.cpu_threads" type="number" min="1"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
+                        <input v-model.number="newVM.memory" type="number" required
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Network</label>
+                        <div class="mt-1 space-y-2">
+                            <select v-model="newVM.network_type"
+                                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="user">User (NAT)</option>
+                                <option value="bridge">Bridge</option>
+                                <option value="none">None</option>
+                            </select>
+                            
+                            <input v-if="newVM.network_type === 'bridge'"
+                                   v-model="newVM.network_bridge"
+                                   placeholder="Bridge device (e.g., virbr0)"
+                                   class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">RTC Base</label>
+                        <select v-model="newVM.rtc_base"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option value="utc">UTC</option>
+                            <option value="localtime">Local Time</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center" :class="{'opacity-50': !qemuCapabilities?.has_kvm}">
+                            <input v-model="newVM.enable_kvm" type="checkbox" 
+                                   :disabled="!qemuCapabilities?.has_kvm"
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">
+                                Enable KVM
+                                <span v-if="!qemuCapabilities?.has_kvm" class="text-yellow-600">(not available)</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center">
+                            <input v-model="newVM.headless" type="checkbox" 
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                        </div>
+                    </div>
+                    <div v-if="!newVM.headless" class="flex items-center space-x-4">
+                        <div class="flex items-center">
+                            <input v-model="newVM.display.type" type="radio" value="spice"
+                                   :disabled="!qemuCapabilities?.has_spice"
+                                   class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">
+                                SPICE
+                                <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center">
+                            <input v-model="newVM.display.type" type="radio" value="vnc"
+                                   class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">VNC</label>
+                        </div>
+                    </div>
+
+                    <!-- Storage Devices -->
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-medium">Storage Devices</h3>
+                            <button type="button" @click="addDisk" 
+                                    class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
+                                Add Device
+                            </button>
+                        </div>
+                        
+                        <div v-for="(disk, index) in newVM.disks" :key="index" class="border rounded-lg p-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Device Type</label>
+                                    <select v-model="disk.type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="hdd">Hard Disk</option>
+                                        <option value="cdrom">CD-ROM</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Interface</label>
+                                    <select v-model="disk.interface" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="virtio">VirtIO</option>
+                                        <option value="ide">IDE</option>
+                                        <option value="scsi">SCSI</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Path</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm">
+                                        <input v-model="disk.path" type="text" 
+                                               class="flex-1 rounded-l-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        <button type="button" @click="browseDisk(index)"
+                                                class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 hover:bg-gray-100">
+                                            Browse
+                                        </button>
+                                    </div>
+                                </div>
+                                <div v-if="disk.type === 'hdd'" class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Format</label>
+                                    <select v-model="disk.format" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="qcow2">QCOW2</option>
+                                        <option value="raw">Raw</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2 flex items-center justify-between">
+                                    <div class="flex items-center">
+                                        <input v-model="disk.readonly" type="checkbox" 
+                                               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        <label class="ml-2 block text-sm text-gray-700">Read-only</label>
+                                    </div>
+                                    <button type="button" @click="removeDisk(index)"
+                                            class="text-red-600 hover:text-red-700">
+                                        Remove
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end space-x-3 mt-6">
+                        <button type="button" @click="showCreateModal = false" 
+                                class="bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300">
+                            Cancel
+                        </button>
+                        <button type="submit" 
+                                :disabled="!qemuCapabilities?.available"
+                                class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                            Create VM
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Main Layout -->
+        <div class="flex h-screen">
+            <!-- Sidebar -->
+            <div class="w-80 bg-white border-r border-gray-200 flex flex-col">
+                <div class="p-4 border-b border-gray-200">
+                    <button @click="showCreateModal = true" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+                        Create New VM
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto p-4">
+                    <div v-for="vm in vms" :key="vm.name" 
+                         @click="selectVM(vm)"
+                         class="p-4 mb-2 rounded-lg cursor-pointer transition-colors"
+                         :class="[selectedVM && selectedVM.name === vm.name ? 'bg-indigo-50 border-indigo-500' : 'hover:bg-gray-50', 'border']">
+                        <div class="flex justify-between items-center">
+                            <h3 class="font-medium">{{ vm.name }}</h3>
+                            <span :class="vm.running ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'" 
+                                  class="px-2 py-1 rounded-full text-xs font-medium">
+                                {{ vm.running ? 'Running' : 'Stopped' }}
+                            </span>
+                        </div>
+                        <p class="text-sm text-gray-500 mt-1">{{ vm.config.arch }} - {{ vm.config.memory }}MB</p>
+                        <div v-if="vm.running" class="text-sm text-gray-500">
+                            CPU: {{ Math.round(vm.cpu_usage) }}%
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="flex-1 flex flex-col">
+                <header class="bg-white border-b border-gray-200 p-4">
+                    <h1 class="text-2xl font-bold text-gray-800">QEMU Web Manager</h1>
+                </header>
+
+                <main class="flex-1 p-6 overflow-y-auto">
+                    <div v-if="selectedVM" class="space-y-6">
+                        <!-- VM Controls -->
+                        <div class="bg-white p-6 rounded-lg shadow-md">
+                            <div class="flex justify-between items-center mb-4">
+                                <h2 class="text-xl font-semibold">{{ selectedVM.name }}</h2>
+                                <div class="space-x-2">
+                                    <button v-if="!selectedVM.running"
+                                            @click="startVM(selectedVM.name)"
+                                            class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
+                                        Start
+                                    </button>
+                                    <button v-if="selectedVM.running"
+                                            @click="stopVM(selectedVM.name)"
+                                            class="bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700">
+                                        Stop
+                                    </button>
+                                    <button @click="deleteVM(selectedVM.name)"
+                                            class="bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700">
+                                        Delete
+                                    </button>
+                                    <button @click="openDisplay(selectedVM)"
+                                            class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700">
+                                        Open Display
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- VM Status -->
+                            <div v-if="selectedVM.running" class="grid grid-cols-2 gap-4 mb-4">
+                                <div class="bg-gray-50 p-4 rounded-lg">
+                                    <h3 class="text-sm font-medium text-gray-500">CPU Usage</h3>
+                                    <p class="mt-1 text-2xl font-semibold">{{ Math.round(selectedVM.cpu_usage) }}%</p>
+                                </div>
+                                <div class="bg-gray-50 p-4 rounded-lg">
+                                    <h3 class="text-sm font-medium text-gray-500">Memory Usage</h3>
+                                    <p class="mt-1 text-2xl font-semibold">{{ Math.round(selectedVM.memory_mb) }} MB</p>
+                                </div>
+                            </div>
+
+                            <!-- VM Configuration -->
+                            <div class="mt-6">
+                                <div class="flex justify-between items-center mb-4">
+                                    <h3 class="text-lg font-medium">Configuration</h3>
+                                    <button v-if="!selectedVM.running" 
+                                            @click="editVM(selectedVM)"
+                                            class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700">
+                                        Edit
+                                    </button>
+                                </div>
+                                <dl class="grid grid-cols-2 gap-4">
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">Architecture</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.arch }}</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">CPU Model</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.cpu }}</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">Memory</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.memory }} MB</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">KVM Enabled</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.enable_kvm ? 'Yes' : 'No' }}</dd>
+                                    </div>
+                                    <div class="bg-gray-50 p-4 rounded-lg">
+                                        <dt class="text-sm font-medium text-gray-500">Headless Mode</dt>
+                                        <dd class="mt-1 text-sm">{{ selectedVM.config.headless ? 'Yes' : 'No' }}</dd>
+                                    </div>
+                                </dl>
+
+                                <!-- Disk Devices -->
+                                <div class="mt-6">
+                                    <h4 class="text-lg font-medium mb-4">Storage Devices</h4>
+                                    <div v-if="selectedVM.config.disks.length === 0" class="text-gray-500 text-center py-4">
+                                        No storage devices configured
+                                    </div>
+                                    <div v-else class="space-y-4">
+                                        <div v-for="(disk, index) in selectedVM.config.disks" :key="index" 
+                                             class="bg-gray-50 p-4 rounded-lg">
+                                            <div class="flex justify-between items-start">
+                                                <div>
+                                                    <span class="text-sm font-medium text-gray-500">
+                                                        {{ disk.type === 'cdrom' ? 'CD-ROM' : 'Hard Disk' }}
+                                                    </span>
+                                                    <p class="mt-1 text-sm break-all">{{ disk.path }}</p>
+                                                </div>
+                                                <div class="text-sm text-gray-500">
+                                                    <p>Interface: {{ disk.interface }}</p>
+                                                    <p v-if="disk.type === 'hdd'">Format: {{ disk.format }}</p>
+                                                    <p>{{ disk.readonly ? 'Read-only' : 'Read-write' }}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- VM Logs -->
+                        <div class="bg-white p-6 rounded-lg shadow-md">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-medium">VM Logs</h3>
+                                <button v-if="selectedVM.running" 
+                                        @click="refreshLogs"
+                                        class="text-indigo-600 hover:text-indigo-700">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                </button>
+                            </div>
+                            
+                            <div v-if="vmLogs && vmLogs.length > 0" 
+                                 class="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-sm overflow-auto max-h-96">
+                                <div v-for="(line, index) in vmLogs" 
+                                     :key="index" 
+                                     class="whitespace-pre-wrap">{{ line }}</div>
+                            </div>
+                            <div v-else class="text-gray-500 text-center py-4">
+                                No logs available{{ selectedVM.running ? ' yet' : '' }}
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="flex items-center justify-center h-full text-gray-500">
+                        Select a VM from the sidebar to view details
+                    </div>
+                </main>
+            </div>
+        </div>
+
+        <!-- Edit VM Modal -->
+        <div v-if="showEditModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-4xl">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold">Edit VM: {{ editingVM.name }}</h2>
+                    <button @click="showEditModal = false" class="text-gray-600 hover:text-gray-800">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                
+                <form @submit.prevent="saveVM" class="space-y-6">
+                    <!-- Basic Settings in Edit VM form -->
+                    <div class="grid grid-cols-2 gap-6">
+                        <!-- Architecture -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Architecture</label>
+                            <select v-model="editingVM.arch" 
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option v-for="arch in updateArchitectureOptions()" 
+                                        :key="arch" 
+                                        :value="arch">{{ arch }}</option>
+                            </select>
+                        </div>
+
+                        <!-- Memory -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Memory (MB)</label>
+                            <input v-model.number="editingVM.memory" type="number" 
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+
+                        <!-- CPU Model -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Model</label>
+                            <div class="mt-1 flex space-x-2">
+                                <select v-model="editingVM.cpu" 
+                                        class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="">Custom...</option>
+                                    <option v-for="model in getCPUModels(editingVM.arch)" 
+                                            :key="model" 
+                                            :value="model">{{ model }}</option>
+                                </select>
+                                <input v-if="shouldShowCustomCPUInput(editingVM.cpu, editingVM.arch)"
+                                       v-model="editingVM.cpu" 
+                                       type="text"
+                                       placeholder="Custom CPU model"
+                                       class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+
+                        <!-- Machine Type -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Machine Type</label>
+                            <div class="mt-1 flex space-x-2">
+                                <select v-model="editingVM.machine" 
+                                        class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="">Custom...</option>
+                                    <option v-for="type in getMachineTypes(editingVM.arch)" 
+                                            :key="type" 
+                                            :value="type">{{ type }}</option>
+                                </select>
+                                <input v-if="shouldShowCustomMachineType(editingVM.machine, editingVM.arch)"
+                                       v-model="editingVM.machine" 
+                                       type="text"
+                                       placeholder="Custom machine type"
+                                       class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Cores</label>
+                            <input v-model.number="editingVM.cpu_cores" type="number" min="1"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Threads per Core</label>
+                            <input v-model.number="editingVM.cpu_threads" type="number" min="1"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Network</label>
+                        <div class="mt-1 space-y-2">
+                            <select v-model="editingVM.network_type"
+                                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="user">User (NAT)</option>
+                                <option value="bridge">Bridge</option>
+                                <option value="none">None</option>
+                            </select>
+                            
+                            <input v-if="editingVM.network_type === 'bridge'"
+                                   v-model="editingVM.network_bridge"
+                                   placeholder="Bridge device (e.g., virbr0)"
+                                   class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">RTC Base</label>
+                        <select v-model="editingVM.rtc_base"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option value="utc">UTC</option>
+                            <option value="localtime">Local Time</option>
+                        </select>
+                    </div>
+
+                    <div class="flex space-x-4">
+                        <div class="flex items-center">
+                            <input v-model="editingVM.enable_kvm" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">Enable KVM</label>
+                        </div>
+                    </div>
+
+                    <!-- Display Settings -->
+                    <div class="space-y-4">
+                        <div class="flex items-center">
+                            <input v-model="editingVM.headless" type="checkbox" 
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                        </div>
+                        
+                        <div v-if="!editingVM.headless" class="space-y-4">
+                            <h3 class="text-lg font-medium">Display Settings</h3>
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center">
+                                    <input v-model="editingVM.display.type" type="radio" value="spice"
+                                           :disabled="!qemuCapabilities?.has_spice"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">
+                                        SPICE
+                                        <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
+                                    </label>
+                                </div>
+                                <div class="flex items-center">
+                                    <input v-model="editingVM.display.type" type="radio" value="vnc"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">VNC</label>
+                                </div>
+                            </div>
+                            
+                            <!-- Optional: Add display-specific settings -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Display Port</label>
+                                    <input v-model.number="editingVM.display.port" type="number"
+                                           placeholder="Auto-assign if empty"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Display Password</label>
+                                    <input v-model="editingVM.display.password" type="password"
+                                           placeholder="Optional"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Storage Devices -->
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-medium">Storage Devices</h3>
+                            <button type="button" @click="addDisk" 
+                                    class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
+                                Add Device
+                            </button>
+                        </div>
+                        
+                        <div v-for="(disk, index) in editingVM.disks" :key="index" class="border rounded-lg p-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Device Type</label>
+                                    <select v-model="disk.type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="hdd">Hard Disk</option>
+                                        <option value="cdrom">CD-ROM</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Interface</label>
+                                    <select v-model="disk.interface" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="virtio">VirtIO</option>
+                                        <option value="ide">IDE</option>
+                                        <option value="scsi">SCSI</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Path</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm">
+                                        <input v-model="disk.path" type="text" 
+                                               class="flex-1 rounded-l-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        <button type="button" @click="browseDisk(index)"
+                                                class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 hover:bg-gray-100">
+                                            Browse
+                                        </button>
+                                    </div>
+                                </div>
+                                <div v-if="disk.type === 'hdd'" class="col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700">Format</label>
+                                    <select v-model="disk.format" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="qcow2">QCOW2</option>
+                                        <option value="raw">Raw</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2 flex items-center justify-between">
+                                    <div class="flex items-center">
+                                        <input v-model="disk.readonly" type="checkbox" 
+                                               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        <label class="ml-2 block text-sm text-gray-700">Read-only</label>
+                                    </div>
+                                    <button type="button" @click="removeDisk(index)"
+                                            class="text-red-600 hover:text-red-700">
+                                        Remove
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end space-x-3 mt-6">
+                        <button type="button" @click="showEditModal = false" 
+                                class="bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300">
+                            Cancel
+                        </button>
+                        <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+                            Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- File Browser Modal -->
+        <div v-if="showFileBrowser" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-4xl" style="max-height: 90vh;">
+                <div class="flex flex-col h-full">
+                    <!-- Header -->
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="flex-1">
+                            <h2 class="text-2xl font-bold">Select File</h2>
+                        </div>
+                        <button @click="showFileBrowser = false" class="text-gray-600 hover:text-gray-800">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Breadcrumbs -->
+                    <div class="flex items-center space-x-2 text-sm text-gray-600 mb-4 overflow-x-auto">
+                        <button @click="navigateTo('/')" 
+                                class="hover:text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded">
+                            Root Directory
+                        </button>
+                        <template v-for="(segment, index) in (currentPath || '/').split('/').filter(Boolean)">
+                            <span class="text-gray-400">/</span>
+                            <button @click="navigateTo(currentPath.split('/').slice(0, index + 2).join('/'))"
+                                    class="hover:text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded whitespace-nowrap">
+                                {{ segment }}
+                            </button>
+                        </template>
+                    </div>
+
+                    <!-- File List -->
+                    <div class="flex-1 border rounded-lg overflow-hidden min-h-0">
+                        <div class="overflow-y-auto" style="max-height: calc(90vh - 12rem);">
+                            <div class="divide-y">
+                                <div v-for="item in fileList" 
+                                     :key="item.path"
+                                     @click="selectFile(item)"
+                                     class="p-4 hover:bg-gray-50 cursor-pointer flex items-center space-x-4">
+                                    <!-- Directory Icon -->
+                                    <svg v-if="item.type === 'directory'" class="w-6 h-6 text-yellow-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                              d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                    </svg>
+                                    <!-- File Icon -->
+                                    <svg v-else class="w-6 h-6 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                    </svg>
+                                    
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-medium truncate" :class="{'text-gray-500': item.is_parent}">
+                                            {{ item.name }}
+                                        </div>
+                                        <div v-if="!item.is_parent && item.type === 'file'" class="text-sm text-gray-500">
+                                            {{ formatSize(item.size) }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- VM Display Modal -->
+        <div v-if="showDisplayModal" class="fixed inset-0 bg-gray-900 bg-opacity-90 overflow-y-auto h-full w-full flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full h-full flex flex-col">
+                <div class="flex justify-between items-center p-4 border-b">
+                    <h2 class="text-2xl font-bold">{{ selectedVM.name }} Display</h2>
+                    <div class="flex items-center space-x-4">
+                        <button @click="toggleFullscreen" class="text-gray-600 hover:text-gray-800">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path v-if="isFullscreen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20H5a2 2 0 01-2-2v-4m0 0l5-5m-5 5h4m5 5v4a2 2 0 01-2 2h-4m0 0l5-5m-5 5v-4m0 4h-4"/>
+                                <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                            </svg>
+                        </button>
+                        <button @click="closeDisplay" class="text-gray-600 hover:text-gray-800">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex-1 relative bg-black">
+                    <div id="display-area" class="absolute inset-0">
+                        <!-- Display will be inserted here -->
+                    </div>
+                </div>
+                <div class="p-4 border-t bg-gray-50 flex justify-between items-center">
+                    <div class="text-sm text-gray-600">
+                        <span v-if="selectedVM.display.type === 'spice'">SPICE Display</span>
+                        <span v-else>VNC Display</span>
+                        <span class="ml-2">Port: {{ selectedVM.display.port }}</span>
+                    </div>
+                    <div class="space-x-2">
+                        <button @click="sendCtrlAltDel" 
+                                class="bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700">
+                            Send Ctrl+Alt+Del
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                showCreateModal: false,
+                showEditModal: false,
+                showFileBrowser: false,
+                errorMessage: null,
+                successMessage: null,
+                qemuCapabilities: null,
+                newVM: {
+                    name: '',
+                    cpu: 'qemu64',
+                    memory: 1024,
+                    cpu_cores: 1,
+                    cpu_threads: 1,
+                    network_type: 'user',
+                    network_bridge: 'virbr0',
+                    rtc_base: 'utc',
+                    disks: [],
+                    enable_kvm: false,
+                    headless: false,
+                    display: {
+                        type: 'vnc',
+                        port: null,
+                        websocket_port: null,
+                        address: '127.0.0.1',
+                        password: null
+                    },
+                    arch: 'x86_64'
+                },
+                vms: [],
+                selectedVM: null,
+                editingVM: null,
+                socket: null,
+                currentPath: '/',
+                fileList: [],
+                editingDiskIndex: null,
+                spiceConnection: null,
+                vncConnection: null,
+                showDisplayModal: false,
+                isFullscreen: false,
+                vmLogs: [],
+                logRefreshInterval: null,
+                displayConnection: null
+            },
+            mounted() {
+                this.socket = io();
+                this.socket.on('vm_status', this.updateVMStatus);
+                this.socket.on('vm_stopped', this.handleVMStopped);
+                this.fetchVMs();
+                this.fetchQEMUCapabilities();
+                
+                // Listen for fullscreen changes
+                document.addEventListener('fullscreenchange', () => {
+                    this.isFullscreen = !!document.fullscreenElement;
+                });
+            },
+            created() {
+                this.socket = io();
+                this.socket.on('connect', () => {
+                    console.log('Connected to server');
+                });
+                this.socket.on('disconnect', () => {
+                    console.log('Disconnected from server');
+                });
+                this.fetchQEMUCapabilities();
+                
+                // Debounced versions of the getter methods
+                this.debouncedGetCPUModels = this.debounce(this._getCPUModels, 300);
+                this.debouncedGetMachineTypes = this.debounce(this._getMachineTypes, 300);
+            },
+            methods: {
+                showError(message, duration = 5000) {
+                    this.errorMessage = message;
+                    if (duration > 0) {
+                        setTimeout(() => {
+                            this.errorMessage = null;
+                        }, duration);
+                    }
+                },
+                showSuccess(message, duration = 3000) {
+                    this.successMessage = message;
+                    if (duration > 0) {
+                        setTimeout(() => {
+                            this.successMessage = null;
+                        }, duration);
+                    }
+                },
+                async fetchVMs() {
+                    try {
+                        const response = await fetch('/api/vms');
+                        this.vms = await response.json();
+                        if (this.selectedVM) {
+                            this.selectedVM = this.vms.find(vm => vm.name === this.selectedVM.name) || null;
+                        }
+                    } catch (error) {
+                        console.error('Error fetching VMs:', error);
+                    }
+                },
+                selectVM(vm) {
+                    this.selectedVM = vm;
+                },
+                editVM(vm) {
+                    this.editingVM = JSON.parse(JSON.stringify(vm.config));
+                    
+                    // Initialize all fields if they don't exist
+                    if (!this.editingVM.cpu_cores) this.editingVM.cpu_cores = 1;
+                    if (!this.editingVM.cpu_threads) this.editingVM.cpu_threads = 1;
+                    if (!this.editingVM.network_type) this.editingVM.network_type = 'user';
+                    if (!this.editingVM.network_bridge) this.editingVM.network_bridge = 'virbr0';
+                    if (!this.editingVM.rtc_base) this.editingVM.rtc_base = 'utc';
+                    
+                    // Initialize display settings if they don't exist
+                    if (!this.editingVM.display) {
+                        this.editingVM.display = {
+                            type: this.qemuCapabilities?.has_spice ? 'spice' : 'vnc',
+                            port: null,
+                            websocket_port: null,
+                            address: '127.0.0.1',
+                            password: null
+                        };
+                    } else if (this.editingVM.display.type === 'spice' && !this.qemuCapabilities?.has_spice) {
+                        // If SPICE is selected but not available, switch to VNC
+                        this.editingVM.display.type = 'vnc';
+                    }
+                    
+                    // Initialize disks array if it doesn't exist
+                    if (!this.editingVM.disks) {
+                        this.editingVM.disks = [];
+                    }
+                    
+                    // Initialize headless mode if it doesn't exist
+                    if (typeof this.editingVM.headless === 'undefined') {
+                        this.editingVM.headless = false;
+                    }
+                    
+                    this.showEditModal = true;
+                },
+                async saveVM() {
+                    try {
+                        const response = await fetch(`/api/vms/${this.editingVM.name}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(this.editingVM)
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${this.editingVM.name} updated successfully`);
+                            this.showEditModal = false;
+                            await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to update VM ${this.editingVM.name}`);
+                        }
+                    } catch (error) {
+                        console.error('Error updating VM:', error);
+                        this.showError(`Failed to update VM: ${error.message}`);
+                    }
+                },
+                addDisk() {
+                    const vm = this.editingVM || this.newVM;  // Handle both edit and create cases
+                    if (!vm.disks) {
+                        vm.disks = [];
+                    }
+                    vm.disks.push({
+                        path: '',
+                        type: 'hdd',
+                        format: 'qcow2',
+                        interface: 'virtio',
+                        readonly: false
+                    });
+                },
+                removeDisk(index) {
+                    const vm = this.editingVM || this.newVM;  // Handle both edit and create cases
+                    vm.disks.splice(index, 1);
+                },
+                async browseDisk(index) {
+                    this.editingDiskIndex = index;
+                    this.showFileBrowser = true;
+                    this.currentPath = '/';  // Start at root instead of using process.cwd()
+                    await this.loadFiles(this.currentPath);
+                },
+                async loadFiles(path) {
+                    try {
+                        const response = await fetch(`/api/browse?${path ? 'path=' + encodeURIComponent(path) : ''}`);
+                        this.fileList = await response.json();
+                        this.currentPath = path || '/';  // Use root as fallback instead of process.cwd()
+                    } catch (error) {
+                        console.error('Error loading files:', error);
+                    }
+                },
+                navigateTo(path) {
+                    this.loadFiles(path);
+                },
+                selectFile(item) {
+                    if (item.type === 'directory') {
+                        this.loadFiles(item.path);
+                    } else {
+                        const vm = this.editingVM || this.newVM;  // Handle both edit and create cases
+                        if (vm && vm.disks) {
+                            vm.disks[this.editingDiskIndex].path = item.path;
+                            this.showFileBrowser = false;
+                        } else {
+                            console.error('No VM or disks array available');
+                            this.showError('Failed to set disk path: VM configuration not found');
+                        }
+                    }
+                },
+                formatSize(bytes) {
+                    if (bytes === 0) return '0 B';
+                    const k = 1024;
+                    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                },
+                async startVM(name) {
+                    try {
+                        const response = await fetch(`/api/vms/${name}/start`, {
+                            method: 'POST'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${name} started successfully`);
+                            await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to start VM ${name}`);
+                        }
+                    } catch (error) {
+                        console.error('Error starting VM:', error);
+                        this.showError(`Failed to start VM ${name}: ${error.message}`);
+                    }
+                },
+                async stopVM(name) {
+                    try {
+                        const response = await fetch(`/api/vms/${name}/stop`, {
+                            method: 'POST'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${name} stopped successfully`);
+                            await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to stop VM ${name}`);
+                        }
+                    } catch (error) {
+                        console.error('Error stopping VM:', error);
+                        this.showError(`Failed to stop VM ${name}: ${error.message}`);
+                    }
+                },
+                async deleteVM(name) {
+                    if (!confirm(`Are you sure you want to delete VM "${name}"?`)) {
+                        return;
+                    }
+                    try {
+                        const response = await fetch(`/api/vms/${name}`, {
+                            method: 'DELETE'
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${name} deleted successfully`);
+                            if (this.selectedVM && this.selectedVM.name === name) {
+                                this.selectedVM = null;
+                            }
+                            await this.fetchVMs();
+                        } else {
+                            this.showError(result.error || `Failed to delete VM ${name}`);
+                        }
+                    } catch (error) {
+                        console.error('Error deleting VM:', error);
+                        this.showError(`Failed to delete VM ${name}: ${error.message}`);
+                    }
+                },
+                updateVMStatus(status) {
+                    const index = this.vms.findIndex(vm => vm.name === status.name);
+                    if (index !== -1) {
+                        this.vms.splice(index, 1, status);
+                        if (this.selectedVM && this.selectedVM.name === status.name) {
+                            this.selectedVM = status;
+                        }
+                    } else {
+                        this.vms.push(status);
+                    }
+                },
+                handleVMStopped(data) {
+                    this.fetchVMs();
+                },
+                async createVM() {
+                    if (!this.qemuCapabilities?.available) {
+                        this.showError('Cannot create VM: QEMU is not available');
+                        return;
+                    }
+
+                    if (!this.qemuCapabilities.architectures.includes(this.newVM.arch)) {
+                        this.showError(`Selected architecture ${this.newVM.arch} is not available`);
+                        return;
+                    }
+
+                    // If KVM is requested but not available, show a warning
+                    if (this.newVM.enable_kvm && !this.qemuCapabilities.has_kvm) {
+                        this.showError('KVM is not available, VM will run without hardware acceleration');
+                    }
+
+                    try {
+                        const response = await fetch('/api/vms', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(this.newVM)
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showSuccess(`VM ${this.newVM.name} created successfully`);
+                            this.showCreateModal = false;
+                            await this.fetchVMs();
+                            // Reset form
+                            this.newVM = {
+                                name: '',
+                                cpu: 'qemu64',
+                                memory: 1024,
+                                cpu_cores: 1,
+                                cpu_threads: 1,
+                                network_type: 'user',
+                                network_bridge: 'virbr0',
+                                rtc_base: 'utc',
+                                disks: [],
+                                enable_kvm: false,
+                                headless: false,
+                                display: {
+                                    type: this.qemuCapabilities.has_spice ? 'spice' : 'vnc',
+                                    port: null,
+                                    websocket_port: null,
+                                    address: '127.0.0.1',
+                                    password: null
+                                },
+                                arch: this.qemuCapabilities.architectures[0] || 'x86_64'
+                            };
+                        } else {
+                            this.showError(result.error || 'Failed to create VM');
+                        }
+                    } catch (error) {
+                        console.error('Error creating VM:', error);
+                        this.showError(`Failed to create VM: ${error.message}`);
+                    }
+                },
+                async fetchQEMUCapabilities() {
+                    try {
+                        const response = await fetch('/api/qemu/capabilities');
+                        this.qemuCapabilities = await response.json();
+                        
+                        // Update newVM display type based on SPICE availability
+                        if (this.qemuCapabilities.has_spice) {
+                            this.newVM.display.type = 'spice';
+                        }
+                        
+                        if (!this.qemuCapabilities.available) {
+                            this.showError(`QEMU is not available: ${this.qemuCapabilities.error}`, 0);
+                        }
+                    } catch (error) {
+                        console.error('Error fetching QEMU capabilities:', error);
+                        this.showError('Failed to fetch QEMU capabilities');
+                    }
+                },
+                updateArchitectureOptions() {
+                    return this.qemuCapabilities?.architectures || ['x86_64'];
+                },
+                getFeatureStatus(feature) {
+                    switch (feature) {
+                        case 'kvm':
+                            return {
+                                available: this.qemuCapabilities?.has_kvm,
+                                label: 'KVM',
+                                description: this.qemuCapabilities?.has_kvm ? 
+                                    'Hardware acceleration available' : 
+                                    'No hardware acceleration available'
+                            };
+                        case 'spice':
+                            return {
+                                available: this.qemuCapabilities?.has_spice,
+                                label: 'SPICE',
+                                description: this.qemuCapabilities?.has_spice ?
+                                    'SPICE display protocol available' :
+                                    'SPICE not available, using VNC fallback'
+                            };
+                        default:
+                            return null;
+                    }
+                },
+                toggleFullscreen() {
+                    const elem = document.getElementById('display-area');
+                    if (!document.fullscreenElement) {
+                        elem.requestFullscreen().catch(err => {
+                            this.showError(`Error attempting to enable fullscreen: ${err.message}`);
+                        });
+                    } else {
+                        document.exitFullscreen();
+                    }
+                },
+                sendCtrlAltDel() {
+                    if (this.displayConnection) {
+                        this.socket.emit('key_event', {
+                            vm_name: this.selectedVM.name,
+                            key_code: 'ctrl_alt_del',
+                            down: true
+                        });
+                        this.showSuccess('Sent Ctrl+Alt+Del');
+                    }
+                },
+                closeDisplay() {
+                    if (this.displayConnection) {
+                        this.socket.emit('disconnect_display', { 
+                            vm_name: this.selectedVM.name 
+                        });
+                        if (this.displayConnection.canvas) {
+                            this.displayConnection.canvas.remove();
+                        }
+                        this.displayConnection = null;
+                    }
+                    this.showDisplayModal = false;
+                },
+                async openDisplay(vm) {
+                    if (!vm.running) {
+                        this.showError("VM must be running to open display");
+                        return;
+                    }
+
+                    this.showDisplayModal = true;
+                    await this.$nextTick();
+
+                    const displayArea = document.getElementById('display-area');
+                    displayArea.innerHTML = '';
+
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'vm-display';
+                    displayArea.appendChild(canvas);
+                    
+                    // Connect to display
+                    this.socket.emit('connect_display', { vm_name: vm.name }, (response) => {
+                        if (!response.success) {
+                            this.showError(response.error || 'Failed to connect to display');
+                            return;
+                        }
+                        this.showSuccess('Connected to display');
+                    });
+
+                    // Handle incoming frames
+                    this.socket.on('frame', (data) => {
+                        if (data.vm_name === vm.name) {
+                            const img = new Image();
+                            img.onload = () => {
+                                canvas.width = img.width;
+                                canvas.height = img.height;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(img, 0, 0);
+                            };
+                            img.src = 'data:image/jpeg;base64,' + data.frame;
+                        }
+                    });
+
+                    // Handle input events
+                    canvas.addEventListener('mousedown', (e) => {
+                        const rect = canvas.getBoundingClientRect();
+                        const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                        const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                        this.socket.emit('pointer_event', {
+                            vm_name: vm.name,
+                            x: Math.round(x),
+                            y: Math.round(y),
+                            button_mask: 1 << (e.button)
+                        });
+                    });
+
+                    canvas.addEventListener('mousemove', (e) => {
+                        const rect = canvas.getBoundingClientRect();
+                        const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+                        const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+                        this.socket.emit('pointer_event', {
+                            vm_name: vm.name,
+                            x: Math.round(x),
+                            y: Math.round(y),
+                            button_mask: e.buttons
+                        });
+                    });
+
+                    // Store canvas reference
+                    this.displayConnection = { canvas };
+                },
+                _getCPUModels(arch) {
+                    console.log(`Attempting to get CPU models for ${arch}`);
+                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
+                },
+                getCPUModels(arch) {
+                    return this.qemuCapabilities?.cpu_models?.[arch] || [];
+                },
+                _getMachineTypes(arch) {
+                    console.log(`Attempting to get machine types for ${arch}`);
+                    return this.qemuCapabilities?.machine_types?.[arch] || [];
+                },
+                getMachineTypes(arch) {
+                    return this.qemuCapabilities?.machine_types?.[arch] || [];
+                },
+                debounce(fn, delay) {
+                    let timeoutID = null;
+                    return function (...args) {
+                        clearTimeout(timeoutID);
+                        timeoutID = setTimeout(() => {
+                            fn.apply(this, args);
+                        }, delay);
+                    };
+                },
+                shouldShowCustomCPUInput(cpu, arch) {
+                    const models = this.qemuCapabilities?.cpu_models?.[arch] || [];
+                    return cpu === '' || !models.includes(cpu);
+                },
+                shouldShowCustomMachineType(machine, arch) {
+                    const types = this.qemuCapabilities?.machine_types?.[arch] || [];
+                    return machine === '' || !types.includes(machine);
+                },
+                async fetchVMLogs(vmName) {
+                    try {
+                        const response = await fetch(`/api/vms/${vmName}/logs`);
+                        const data = await response.json();
+                        if (data.success) {
+                            this.vmLogs = data.logs;
+                        } else {
+                            console.error('Failed to fetch logs:', data.error);
+                        }
+                    } catch (error) {
+                        console.error('Error fetching VM logs:', error);
+                    }
+                },
+                refreshLogs() {
+                    if (this.selectedVM) {
+                        this.fetchVMLogs(this.selectedVM.name);
+                    }
+                },
+                async selectVM(vm) {
+                    this.selectedVM = vm;
+                    if (vm) {
+                        // Clear existing refresh interval
+                        if (this.logRefreshInterval) {
+                            clearInterval(this.logRefreshInterval);
+                        }
+                        
+                        // Fetch logs immediately
+                        await this.fetchVMLogs(vm.name);
+                        
+                        // Set up automatic refresh if VM is running
+                        if (vm.running) {
+                            this.logRefreshInterval = setInterval(() => {
+                                this.fetchVMLogs(vm.name);
+                            }, 5000); // Refresh every 5 seconds
+                        }
+                    }
+                },
+                // Add cleanup to the beforeDestroy hook
+                beforeDestroy() {
+                    if (this.logRefreshInterval) {
+                        clearInterval(this.logRefreshInterval);
+                    }
+                },
+            },
+            watch: {
+                'selectedVM.running': function(newVal, oldVal) {
+                    if (newVal === false && this.logRefreshInterval) {
+                        clearInterval(this.logRefreshInterval);
+                        this.logRefreshInterval = null;
+                    } else if (newVal === true && !this.logRefreshInterval) {
+                        this.fetchVMLogs(this.selectedVM.name);
+                        this.logRefreshInterval = setInterval(() => {
+                            this.fetchVMLogs(this.selectedVM.name);
+                        }, 5000);
+                    }
+                },
+                'editingVM.arch': function(newArch) {
+                    const cpuModels = this.getCPUModels(newArch);
+                    const machineTypes = this.getMachineTypes(newArch);
+                    
+                    // Only update if we have models/types and current values aren't valid
+                    if (cpuModels.length > 0 && !cpuModels.includes(this.editingVM.cpu)) {
+                        this.editingVM.cpu = cpuModels[0] || 'qemu64';
+                    }
+                    if (machineTypes.length > 0 && !machineTypes.includes(this.editingVM.machine)) {
+                        this.editingVM.machine = machineTypes[0] || 'q35';
+                    }
+                },
+                'newVM.arch': function(newArch) {
+                    const cpuModels = this.getCPUModels(newArch);
+                    const machineTypes = this.getMachineTypes(newArch);
+                    
+                    // Only update if we have models/types and current values aren't valid
+                    if (cpuModels.length > 0 && !cpuModels.includes(this.newVM.cpu)) {
+                        this.newVM.cpu = cpuModels[0] || 'qemu64';
+                    }
+                    if (machineTypes.length > 0 && !machineTypes.includes(this.newVM.machine)) {
+                        this.newVM.machine = machineTypes[0] || 'q35';
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html> 

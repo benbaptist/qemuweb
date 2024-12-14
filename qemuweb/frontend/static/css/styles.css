@@ -1,0 +1,13 @@
+.vm-display {
+    width: 100%;
+    height: 100%;
+    background-color: black;
+}
+
+.vm-display canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* Add any additional custom styles here */ 
