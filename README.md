@@ -13,6 +13,7 @@ A modern web interface for managing QEMU virtual machines. This application prov
 - VM configuration persistence
 - Real-time VM logs viewing
 - Command-line interface with configuration overrides
+- Automatic configuration management in ~/.config/qemuweb
 
 ## Requirements
 
@@ -53,12 +54,15 @@ A modern web interface for managing QEMU virtual machines. This application prov
 
 ## Configuration
 
-The application uses two main configuration files:
+The application stores its configuration files in `~/.config/qemuweb/`:
 
 1. `config.json`: General application settings
 2. `vm_configs.json`: Virtual machine configurations
 
-These files will be created automatically with default values when you first run the application.
+These files will be automatically:
+- Created with default values if they don't exist
+- Migrated from the current directory if legacy configs are found
+- Updated with any missing default values when the application starts
 
 Settings can be overridden via command-line arguments (see Usage section).
 
