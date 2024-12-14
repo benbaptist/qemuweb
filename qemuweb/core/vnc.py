@@ -4,7 +4,6 @@ from typing import Dict, Optional, Tuple
 import base64
 from io import BytesIO
 from PIL import Image
-from vnc_client import VNCClient
 
 class DisplayManager:
     def __init__(self):
