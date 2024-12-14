@@ -4,6 +4,11 @@ from pathlib import Path
 from typing import Dict, List
 import eventlet
 import logging
+import signal
+import platform
+import psutil
+import sys
+import atexit
 
 from .app import socketio
 from ..core.machine import VMConfig
@@ -11,10 +16,42 @@ from ..config.manager import config_manager
 
 bp = Blueprint('main', __name__)
 
+def cleanup_vms():
+    """Stop all running VMs on server shutdown."""
+    if hasattr(current_app, 'vm_manager'):
+        logging.info("Server shutting down, stopping all VMs...")
+        for vm_name in current_app.vm_manager.vms:
+            try:
+                current_app.vm_manager.stop_vm(vm_name)
+            except Exception as e:
+                logging.error(f"Failed to stop VM {vm_name} during shutdown: {e}")
+
+# Register cleanup handlers
+atexit.register(cleanup_vms)
+signal.signal(signal.SIGTERM, lambda signo, frame: cleanup_vms())
+signal.signal(signal.SIGINT, lambda signo, frame: cleanup_vms())
+
 @bp.route('/')
 def index():
     """Render the main application page."""
     return render_template('index.html')
+
+@bp.route('/api/system/info', methods=['GET'])
+def get_system_info():
+    """Get system information."""
+    try:
+        info = {
+            'os_name': platform.system(),
+            'os_version': platform.release(),
+            'python_version': platform.python_version(),
+            'cpu_count': psutil.cpu_count(logical=True),
+            'memory_total': psutil.virtual_memory().total // (1024 * 1024),  # Convert to MB
+            'hostname': platform.node()
+        }
+        return jsonify(info)
+    except Exception as e:
+        logging.error(f"Error getting system info: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @bp.route('/api/vms', methods=['GET'])
 def list_vms():

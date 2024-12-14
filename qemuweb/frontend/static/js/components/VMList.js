@@ -60,7 +60,13 @@ Vue.component('vm-list', {
                                     {{ vm.name }}
                                 </div>
                                 <div class="text-sm text-gray-500">
-                                    {{ vm.arch }} | {{ vm.cpu_cores }} cores | {{ vm.memory }}MB
+                                    {{ vm.arch }}
+                                    <template v-if="vm.cpu_cores">
+                                        • {{ vm.cpu_cores }} core<template v-if="vm.cpu_cores !== 1">s</template>
+                                    </template>
+                                    <template v-if="vm.memory">
+                                        • {{ vm.memory }} MB RAM
+                                    </template>
                                 </div>
                             </div>
                         </div>

@@ -15,7 +15,9 @@ const app = new Vue({
         displayConnections: {},
         showingDisplay: false,
         vmLogs: [],
-        logRefreshInterval: null
+        logRefreshInterval: null,
+        currentView: 'vms',
+        systemInfo: null
     },
     computed: {
         sortedVMs() {
@@ -290,11 +292,24 @@ const app = new Vue({
                     }, 5000); // Refresh every 5 seconds
                 }
             }
+        },
+
+        async loadSystemInfo() {
+            try {
+                const response = await fetch('/api/system/info');
+                if (!response.ok) {
+                    throw new Error(`Failed to load system info: ${response.statusText}`);
+                }
+                this.systemInfo = await response.json();
+            } catch (error) {
+                this.errorMessage = error.message;
+            }
         }
     },
     created() {
         this.loadVMs();
         this.loadQEMUCapabilities();
+        this.loadSystemInfo();
 
         // WebSocket event listeners
         socket.on('vm_state_change', this.handleVMStateChange);

@@ -276,7 +276,7 @@ Vue.component('vm-details', {
                         </div>
                     </div>
 
-                    <!-- Display Settings -->
+                    <!-- Feature Toggles and Display Settings -->
                     <div class="space-y-4">
                         <div class="flex items-center space-x-4">
                             <div class="flex items-center" :class="{'opacity-50': !qemuCapabilities?.has_kvm}">

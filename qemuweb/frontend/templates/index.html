@@ -37,15 +37,38 @@
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <!-- Header -->
                 <div class="flex justify-between items-center mb-6">
-                    <h1 class="text-3xl font-bold text-gray-900">QEMU Web Manager</h1>
-                    <button @click="showCreateModal = true"
+                    <div class="flex items-center space-x-4">
+                        <h1 class="text-3xl font-bold text-gray-900">QEMU Web Manager</h1>
+                        <nav class="flex space-x-4">
+                            <button @click="currentView = 'vms'"
+                                    :class="[
+                                        'px-3 py-2 text-sm font-medium rounded-md',
+                                        currentView === 'vms' 
+                                            ? 'bg-gray-900 text-white' 
+                                            : 'text-gray-500 hover:text-gray-700'
+                                    ]">
+                                Virtual Machines
+                            </button>
+                            <button @click="currentView = 'status'"
+                                    :class="[
+                                        'px-3 py-2 text-sm font-medium rounded-md',
+                                        currentView === 'status' 
+                                            ? 'bg-gray-900 text-white' 
+                                            : 'text-gray-500 hover:text-gray-700'
+                                    ]">
+                                System Status
+                            </button>
+                        </nav>
+                    </div>
+                    <button v-if="currentView === 'vms'"
+                            @click="showCreateModal = true"
                             class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                         Create VM
                     </button>
                 </div>
 
-                <!-- Content Grid -->
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- VM Management View -->
+                <div v-if="currentView === 'vms'" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <!-- VM List -->
                     <div class="lg:col-span-1">
                         <vm-list
@@ -112,6 +135,14 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Status View -->
+                <div v-else-if="currentView === 'status'">
+                    <status-page
+                        :qemu-capabilities="qemuCapabilities"
+                        :system-info="systemInfo">
+                    </status-page>
+                </div>
             </div>
         </div>
     </div>
@@ -124,6 +155,7 @@
     <script src="/static/js/components/VMDisplay.js"></script>
     <script src="/static/js/components/VMDetails.js"></script>
     <script src="/static/js/components/VMLogs.js"></script>
+    <script src="/static/js/components/StatusPage.js"></script>
     
     <!-- Main Application Script -->
     <script src="/static/js/app.js"></script>
