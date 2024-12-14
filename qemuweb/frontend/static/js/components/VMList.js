@@ -48,9 +48,10 @@ Vue.component('vm-list', {
                                 <div class="h-3 w-3 rounded-full"
                                      :class="{
                                          'bg-green-400': getVMState(vm.name) === 'running',
-                                         'bg-red-400': getVMState(vm.name) === 'stopped',
+                                         'bg-gray-400': getVMState(vm.name) === 'stopped',
                                          'bg-yellow-400': getVMState(vm.name) === 'paused',
-                                         'bg-gray-400': getVMState(vm.name) === 'unknown'
+                                         'bg-red-400': getVMState(vm.name) === 'error',
+                                         'bg-gray-300': getVMState(vm.name) === 'unknown'
                                      }">
                                 </div>
                             </div>
@@ -71,7 +72,7 @@ Vue.component('vm-list', {
                             </button>
                             <button v-else
                                     @click.stop="stopVM(vm.name)"
-                                    class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
+                                    class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-gray-600 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
                                 Stop
                             </button>
                             <button @click.stop="deleteVM(vm.name)"

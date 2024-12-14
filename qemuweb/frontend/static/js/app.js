@@ -78,6 +78,7 @@ const app = new Vue({
                 }
 
                 this.successMessage = 'VM started successfully';
+                this.$set(this.vmStates, vmName, 'running');
             } catch (error) {
                 this.errorMessage = error.message;
             }
@@ -94,6 +95,7 @@ const app = new Vue({
                 }
 
                 this.successMessage = 'VM stopped successfully';
+                this.$set(this.vmStates, vmName, 'stopped');
             } catch (error) {
                 this.errorMessage = error.message;
             }

@@ -108,82 +108,90 @@ Vue.component('vm-details', {
     template: `
         <div class="space-y-6">
             <!-- Header -->
-            <div class="flex justify-between items-center">
-                <h2 class="text-2xl font-bold text-gray-900">{{ vm.name }}</h2>
-                <div class="flex space-x-2">
-                    <button v-if="vmState === 'running' && !vmConfig.headless && vmConfig.display"
-                            @click="openDisplay"
-                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700">
-                        Open Display
-                    </button>
-                    <button v-if="!isEditing"
-                            @click="startEditing"
-                            class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
-                        Edit Configuration
-                    </button>
+            <div class="px-6 py-5 border-b border-gray-200">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center space-x-3">
+                        <h2 class="text-2xl font-bold text-gray-900">{{ vm.name }}</h2>
+                        <span class="px-2 py-1 text-sm rounded-full"
+                              :class="{
+                                  'bg-green-100 text-green-800': vmState === 'running',
+                                  'bg-gray-100 text-gray-800': vmState === 'stopped',
+                                  'bg-yellow-100 text-yellow-800': vmState === 'paused',
+                                  'bg-red-100 text-red-800': vmState === 'error'
+                              }">
+                            {{ vmState.charAt(0).toUpperCase() + vmState.slice(1) }}
+                        </span>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button v-if="vmState === 'running' && !vmConfig.headless && vmConfig.display"
+                                @click="openDisplay"
+                                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700">
+                            Open Display
+                        </button>
+                        <button v-if="!isEditing"
+                                @click="startEditing"
+                                class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                            Edit Configuration
+                        </button>
+                    </div>
                 </div>
             </div>
 
             <!-- View Mode -->
-            <div v-if="!isEditing" class="bg-white shadow overflow-hidden sm:rounded-lg">
-                <div class="px-4 py-5 sm:px-6">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900">VM Configuration</h3>
-                </div>
-                <div class="border-t border-gray-200">
-                    <dl>
-                        <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                            <dt class="text-sm font-medium text-gray-500">Architecture</dt>
-                            <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{{ vmConfig.arch || 'Not specified' }}</dd>
-                        </div>
-                        <div class="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                            <dt class="text-sm font-medium text-gray-500">CPU</dt>
-                            <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-                                {{ vmConfig.cpu }} ({{ vmConfig.cpu_cores }} cores, {{ vmConfig.cpu_threads }} threads per core)
-                            </dd>
-                        </div>
-                        <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                            <dt class="text-sm font-medium text-gray-500">Memory</dt>
-                            <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">{{ vmConfig.memory || 0 }} MB</dd>
-                        </div>
-                        <div class="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                            <dt class="text-sm font-medium text-gray-500">Network</dt>
-                            <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-                                {{ vmConfig.network_type || 'None' }}
-                                <span v-if="vmConfig.network_type === 'bridge'">({{ vmConfig.network_bridge }})</span>
-                            </dd>
-                        </div>
-                        <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                            <dt class="text-sm font-medium text-gray-500">Display</dt>
-                            <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-                                {{ displayType }}
-                            </dd>
-                        </div>
-                        <div class="bg-white px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                            <dt class="text-sm font-medium text-gray-500">Storage Devices</dt>
-                            <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
-                                <ul v-if="vmConfig.disks && vmConfig.disks.length" class="border border-gray-200 rounded-md divide-y divide-gray-200">
-                                    <li v-for="(disk, index) in vmConfig.disks" :key="index"
-                                        class="pl-3 pr-4 py-3 flex items-center justify-between text-sm">
-                                        <div class="w-0 flex-1 flex items-center">
-                                            <span class="ml-2 flex-1 w-0 truncate">
-                                                {{ disk.type === 'cdrom' ? '📀' : '💾' }}
-                                                {{ disk.path }}
-                                                ({{ disk.interface }}, {{ disk.format || 'raw' }})
-                                                {{ disk.readonly ? '(read-only)' : '' }}
-                                            </span>
-                                        </div>
-                                    </li>
-                                </ul>
-                                <div v-else class="text-sm text-gray-500">No storage devices configured</div>
-                            </dd>
-                        </div>
-                    </dl>
-                </div>
+            <div v-if="!isEditing" class="px-6">
+                <dl class="space-y-6">
+                    <div class="grid grid-cols-3 gap-4">
+                        <dt class="text-sm font-medium text-gray-500">Architecture</dt>
+                        <dd class="text-sm text-gray-900 col-span-2">{{ vmConfig.arch || 'Not specified' }}</dd>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4">
+                        <dt class="text-sm font-medium text-gray-500">CPU</dt>
+                        <dd class="text-sm text-gray-900 col-span-2">
+                            {{ vmConfig.cpu }} ({{ vmConfig.cpu_cores }} cores, {{ vmConfig.cpu_threads }} threads per core)
+                        </dd>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4">
+                        <dt class="text-sm font-medium text-gray-500">Memory</dt>
+                        <dd class="text-sm text-gray-900 col-span-2">{{ vmConfig.memory || 0 }} MB</dd>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4">
+                        <dt class="text-sm font-medium text-gray-500">Network</dt>
+                        <dd class="text-sm text-gray-900 col-span-2">
+                            {{ vmConfig.network_type || 'None' }}
+                            <span v-if="vmConfig.network_type === 'bridge'">({{ vmConfig.network_bridge }})</span>
+                        </dd>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4">
+                        <dt class="text-sm font-medium text-gray-500">Display</dt>
+                        <dd class="text-sm text-gray-900 col-span-2">
+                            {{ displayType }}
+                        </dd>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4">
+                        <dt class="text-sm font-medium text-gray-500">Storage Devices</dt>
+                        <dd class="text-sm text-gray-900 col-span-2">
+                            <ul v-if="vmConfig.disks && vmConfig.disks.length" class="border border-gray-200 rounded-md divide-y divide-gray-200">
+                                <li v-for="(disk, index) in vmConfig.disks" :key="index"
+                                    class="pl-3 pr-4 py-3 flex items-center justify-between text-sm">
+                                    <div class="w-0 flex-1 flex items-center">
+                                        <span class="ml-2 flex-1 w-0 truncate">
+                                            {{ disk.type === 'cdrom' ? '📀' : '💾' }}
+                                            {{ disk.path }}
+                                            ({{ disk.interface }}, {{ disk.format || 'raw' }})
+                                            {{ disk.readonly ? '(read-only)' : '' }}
+                                        </span>
+                                    </div>
+                                </li>
+                            </ul>
+                            <div v-else class="text-sm text-gray-500">No storage devices configured</div>
+                        </dd>
+                    </div>
+                </dl>
             </div>
 
             <!-- Edit Mode -->
-            <div v-else class="space-y-4">
-                <form @submit.prevent="saveChanges" class="space-y-4">
+            <div v-else class="px-6 pb-6">
+                <form @submit.prevent="saveChanges" class="space-y-6">
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Architecture</label>
                         <select v-model="editedConfig.arch" required
@@ -267,20 +275,57 @@ Vue.component('vm-details', {
                             <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
                         </div>
                     </div>
-                    <div v-if="!editedConfig.headless" class="flex items-center space-x-4">
-                        <div class="flex items-center">
-                            <input v-model="editedConfig.display.type" type="radio" value="spice"
-                                   :disabled="!qemuCapabilities?.has_spice"
-                                   class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                            <label class="ml-2 block text-sm text-gray-700">
-                                SPICE
-                                <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
-                            </label>
+
+                    <!-- Display Settings -->
+                    <div class="space-y-4">
+                        <div class="flex items-center space-x-4">
+                            <div class="flex items-center" :class="{'opacity-50': !qemuCapabilities?.has_kvm}">
+                                <input v-model="editedConfig.enable_kvm" type="checkbox" 
+                                       :disabled="!qemuCapabilities?.has_kvm"
+                                       class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                <label class="ml-2 block text-sm text-gray-700">
+                                    Enable KVM
+                                    <span v-if="!qemuCapabilities?.has_kvm" class="text-yellow-600">(not available)</span>
+                                </label>
+                            </div>
+                            <div class="flex items-center">
+                                <input v-model="editedConfig.headless" type="checkbox" 
+                                       class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                <label class="ml-2 block text-sm text-gray-700">Headless Mode</label>
+                            </div>
                         </div>
-                        <div class="flex items-center">
-                            <input v-model="editedConfig.display.type" type="radio" value="vnc"
-                                   class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                            <label class="ml-2 block text-sm text-gray-700">VNC</label>
+
+                        <div v-if="!editedConfig.headless" class="space-y-4">
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center">
+                                    <input v-model="editedConfig.display.type" type="radio" value="spice"
+                                           :disabled="!qemuCapabilities?.has_spice"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">
+                                        SPICE
+                                        <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
+                                    </label>
+                                </div>
+                                <div class="flex items-center">
+                                    <input v-model="editedConfig.display.type" type="radio" value="vnc"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">VNC</label>
+                                </div>
+                            </div>
+
+                            <!-- VNC Settings -->
+                            <div v-if="editedConfig.display.type === 'vnc'" class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">VNC Port (0 for auto)</label>
+                                    <input v-model.number="editedConfig.display.port" type="number"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">VNC Password (optional)</label>
+                                    <input v-model="editedConfig.display.password" type="password"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                            </div>
                         </div>
                     </div>
 
