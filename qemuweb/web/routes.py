@@ -10,7 +10,7 @@ import psutil
 import sys
 import atexit
 
-from .app import socketio
+from .app import socketio, create_app
 from ..core.machine import VMConfig
 from ..core.display import VMDisplay
 from ..config.manager import config_manager
@@ -22,18 +22,28 @@ vm_displays: Dict[str, VMDisplay] = {}
 
 def cleanup_vms():
     """Stop all running VMs on server shutdown."""
-    if hasattr(current_app, 'vm_manager'):
-        logging.info("Server shutting down, stopping all VMs...")
-        for vm_name in current_app.vm_manager.vms:
-            try:
-                current_app.vm_manager.stop_vm(vm_name)
-            except Exception as e:
-                logging.error(f"Failed to stop VM {vm_name} during shutdown: {e}")
+    try:
+        app = create_app()
+        with app.app_context():
+            if hasattr(current_app, 'vm_manager'):
+                logging.info("Server shutting down, stopping all VMs...")
+                for vm_name in current_app.vm_manager.vms:
+                    try:
+                        current_app.vm_manager.stop_vm(vm_name)
+                    except Exception as e:
+                        logging.error(f"Error stopping VM {vm_name}: {e}")
+    except Exception as e:
+        logging.error(f"Error during cleanup: {e}")
+    sys.exit(0)
+
+def signal_handler(signo, frame):
+    """Handle shutdown signals."""
+    cleanup_vms()
 
 # Register cleanup handlers
 atexit.register(cleanup_vms)
-signal.signal(signal.SIGTERM, lambda signo, frame: cleanup_vms())
-signal.signal(signal.SIGINT, lambda signo, frame: cleanup_vms())
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 @bp.route('/')
 def index():
@@ -185,64 +195,71 @@ def handle_connect():
 @socketio.on('init_display')
 def handle_init_display(data):
     """Initialize display connection for a VM."""
-    async def async_init():
-        vm_id = data.get('vm_id')
-        logging.info(f'Initializing display for VM {vm_id}')
+    vm_id = data.get('vm_id')
+    session_id = request.sid  # Store session ID
+    logging.info(f'Initializing display for VM {vm_id}')
+    
+    if not vm_id:
+        emit('error', {'message': 'No VM ID provided'})
+        return
         
-        if not vm_id:
-            emit('error', {'message': 'No VM ID provided'})
-            return
-            
-        # Get VM config and create display
-        vm = current_app.vm_manager.get_vm(vm_id)
-        if not vm:
-            emit('error', {'message': 'VM not found'})
-            return
-            
-        # Get display info
-        display_info = vm.get('display', {})
-        if not display_info or not display_info.get('port'):
-            emit('error', {'message': 'VM display not configured'})
-            return
-            
+    # Get VM config and create display
+    all_vms = current_app.vm_manager.get_all_vms()
+    vm = next((vm for vm in all_vms if vm.get('name') == vm_id), None)
+    if not vm:
+        logging.error(f'VM not found: {vm_id}')
+        emit('error', {'message': 'VM not found'})
+        return
+        
+    # Get display info
+    display_info = vm.get('display', {})
+    if not display_info or not display_info.get('port'):
+        logging.error(f'Display not configured for VM: {vm_id}')
+        emit('error', {'message': 'VM display not configured'})
+        return
+        
+    try:
         # Create display handler
-        display = VMDisplay(host='localhost', port=display_info['port'])
-        if not await display.connect():
-            emit('error', {'message': 'Failed to connect to VM display'})
-            return
+        port = display_info['port']
+        logging.info(f'Creating display handler for port {port}')
+        display = VMDisplay(host='localhost', port=port)
+        
+        # Store the display before spawning the thread
+        vm_displays[session_id] = display
+        
+        def _connect_and_stream():
+            try:
+                display.connect_and_stream(socketio, session_id)
+            except Exception as e:
+                logging.error(f'Error in connect_and_stream: {e}', exc_info=True)
+                socketio.emit('error', {'message': f'Display connection failed: {str(e)}'}, room=session_id)
             
-        vm_displays[request.sid] = display
-        logging.info(f'Display connected for VM {vm_id}')
+        eventlet.spawn(_connect_and_stream)
+        logging.info(f'Display initialization started for VM {vm_id} on port {port}')
         
-        # Start streaming frames in a background task
-        eventlet.spawn(display.start_streaming, socketio, request.sid)
-        
-    eventlet.spawn(async_init)
+    except Exception as e:
+        logging.error(f'Error initializing display: {e}', exc_info=True)
+        emit('error', {'message': f'Display initialization failed: {str(e)}'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle socket disconnections."""
-    async def async_disconnect():
-        if request.sid in vm_displays:
-            display = vm_displays[request.sid]
-            await display.disconnect()
-            del vm_displays[request.sid]
-        logging.info('Client disconnected')
-        
-    eventlet.spawn(async_disconnect)
+    if request.sid in vm_displays:
+        display = vm_displays[request.sid]
+        display.stop_streaming()
+        eventlet.spawn_after(0, display.disconnect)
+        del vm_displays[request.sid]
+    logging.info('Client disconnected')
 
 @socketio.on('vm_input')
 def handle_vm_input(data):
     """Handle VM input events from the client."""
-    async def async_input():
-        if request.sid not in vm_displays:
-            logging.warning(f'No display found for session {request.sid}')
-            return
-            
-        display = vm_displays[request.sid]
-        try:
-            await display.handle_input(data['type'], data)
-        except Exception as e:
-            logging.error(f'Error handling input event: {e}')
-            
-    eventlet.spawn(async_input) 
+    if request.sid not in vm_displays:
+        logging.warning(f'No display found for session {request.sid}')
+        return
+        
+    display = vm_displays[request.sid]
+    try:
+        eventlet.spawn_after(0, display.handle_input, data['type'], data)
+    except Exception as e:
+        logging.error(f'Error handling input event: {e}') 
