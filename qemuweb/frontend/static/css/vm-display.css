@@ -1,0 +1,86 @@
+.vm-display {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--surface-ground);
+}
+
+.toolbar {
+    padding: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: var(--surface-section);
+    border-bottom: 1px solid var(--surface-border);
+}
+
+.display-container {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    position: relative;
+}
+
+canvas {
+    background: black;
+    box-shadow: 0 0 20px rgba(0,0,0,0.3);
+}
+
+canvas:focus {
+    outline: 2px solid var(--primary-color);
+}
+
+.scale-controls {
+    position: absolute;
+    bottom: 1rem;
+    right: 1rem;
+    background: var(--surface-overlay);
+    padding: 0.5rem;
+    border-radius: var(--border-radius);
+    display: flex;
+    gap: 0.5rem;
+}
+
+.status {
+    font-size: 0.875rem;
+}
+
+.status.connected {
+    color: var(--green-500);
+}
+
+.status.disconnected {
+    color: var(--red-500);
+}
+
+.btn {
+    background: var(--primary-color);
+    border: none;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background-color 0.2s;
+}
+
+.btn:hover {
+    background: var(--primary-600);
+}
+
+.vm-display-container {
+    height: 600px;
+    margin: 1rem 0;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.fade-enter-active, .fade-leave-active {
+    transition: opacity 0.3s;
+}
+
+.fade-enter, .fade-leave-to {
+    opacity: 0;
+} 

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VM Display</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1e1e1e;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            color: #fff;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        .toolbar {
+            padding: 10px;
+            background: #2d2d2d;
+            border-bottom: 1px solid #3d3d3d;
+        }
+
+        .display-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #vm-canvas {
+            background: #000;
+            box-shadow: 0 0 20px rgba(0,0,0,0.3);
+        }
+
+        #vm-canvas:focus {
+            outline: 2px solid #0078d4;
+        }
+
+        .scale-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(45, 45, 45, 0.9);
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            background: #0078d4;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0086ef;
+        }
+
+        .status {
+            display: inline-block;
+            margin-left: 10px;
+            font-size: 14px;
+        }
+
+        .status.connected {
+            color: #0f0;
+        }
+
+        .status.disconnected {
+            color: #f00;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button onclick="toggleFullscreen()">Toggle Fullscreen</button>
+        <div class="status" id="connection-status">Connecting...</div>
+    </div>
+
+    <div class="display-container">
+        <canvas id="vm-canvas" tabindex="1"></canvas>
+        <div class="scale-controls">
+            <button onclick="setScale(1.0)">100%</button>
+            <button onclick="setScale(1.5)">150%</button>
+            <button onclick="setScale(2.0)">200%</button>
+            <button onclick="fitToWindow()">Fit</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="/static/js/vm_display.js"></script>
+    <script>
+        const socket = io();
+        let display = null;
+        let statusEl = document.getElementById('connection-status');
+
+        socket.on('connect', () => {
+            statusEl.textContent = 'Connected';
+            statusEl.className = 'status connected';
+        });
+
+        socket.on('disconnect', () => {
+            statusEl.textContent = 'Disconnected';
+            statusEl.className = 'status disconnected';
+        });
+
+        // Initialize display when document is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            display = new VMDisplay('vm-canvas', socket);
+            fitToWindow(); // Initial fit
+        });
+
+        function setScale(scale) {
+            if (display) {
+                display.setScale(scale);
+            }
+        }
+
+        function fitToWindow() {
+            if (display && display.canvas) {
+                const container = document.querySelector('.display-container');
+                const canvas = display.canvas;
+                const scaleX = container.clientWidth / canvas.width;
+                const scaleY = container.clientHeight / canvas.height;
+                const scale = Math.min(scaleX, scaleY, 2.0); // Cap at 200%
+                setScale(scale);
+            }
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (display && display.canvas.style.transform.includes('scale')) {
+                fitToWindow();
+            }
+        });
+    </script>
+</body>
+</html> 

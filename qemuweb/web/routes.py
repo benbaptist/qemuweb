@@ -12,9 +12,13 @@ import atexit
 
 from .app import socketio
 from ..core.machine import VMConfig
+from ..core.display import VMDisplay
 from ..config.manager import config_manager
 
 bp = Blueprint('main', __name__)
+
+# Store active display connections
+vm_displays: Dict[str, VMDisplay] = {}
 
 def cleanup_vms():
     """Stop all running VMs on server shutdown."""
@@ -167,54 +171,78 @@ def get_vm_display(name: str):
     }
     return jsonify(display_info)
 
+@bp.route('/vm/<vm_id>/display')
+def vm_display(vm_id):
+    """Render the VM display page."""
+    return render_template('vm_display.html', vm_id=vm_id)
+
 # WebSocket routes
-@socketio.on('connect_display')
-def handle_connect_display(data):
-    """Handle display connection request."""
-    vm_name = data.get('vm_name')
-    if vm_name in current_app.vm_manager.vms:
-        config = current_app.vm_manager.vms[vm_name]
-        if config.display.type == 'vnc' and config.display.port:
-            if current_app.display_manager.connect_vnc(vm_name, config.display.address, 
-                                        config.display.port, config.display.password):
-                emit('display_connected', {'status': 'success'})
-                return
-    emit('display_connected', {'status': 'error', 'message': 'Failed to connect to display'})
+@socketio.on('connect')
+def handle_connect():
+    """Handle new socket connections."""
+    logging.info('Client connected')
 
-@socketio.on('disconnect_display')
-def handle_disconnect_display(data):
-    """Handle display disconnection request."""
-    vm_name = data.get('vm_name')
-    current_app.display_manager.disconnect_vnc(vm_name)
+@socketio.on('init_display')
+def handle_init_display(data):
+    """Initialize display connection for a VM."""
+    async def async_init():
+        vm_id = data.get('vm_id')
+        logging.info(f'Initializing display for VM {vm_id}')
+        
+        if not vm_id:
+            emit('error', {'message': 'No VM ID provided'})
+            return
+            
+        # Get VM config and create display
+        vm = current_app.vm_manager.get_vm(vm_id)
+        if not vm:
+            emit('error', {'message': 'VM not found'})
+            return
+            
+        # Get display info
+        display_info = vm.get('display', {})
+        if not display_info or not display_info.get('port'):
+            emit('error', {'message': 'VM display not configured'})
+            return
+            
+        # Create display handler
+        display = VMDisplay(host='localhost', port=display_info['port'])
+        if not await display.connect():
+            emit('error', {'message': 'Failed to connect to VM display'})
+            return
+            
+        vm_displays[request.sid] = display
+        logging.info(f'Display connected for VM {vm_id}')
+        
+        # Start streaming frames in a background task
+        eventlet.spawn(display.start_streaming, socketio, request.sid)
+        
+    eventlet.spawn(async_init)
 
-@socketio.on('key_event')
-def handle_key_event(data):
-    """Handle keyboard event."""
-    vm_name = data.get('vm_name')
-    key_code = data.get('key_code')
-    down = data.get('down', True)
-    current_app.display_manager.send_key_event(vm_name, key_code, down)
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle socket disconnections."""
+    async def async_disconnect():
+        if request.sid in vm_displays:
+            display = vm_displays[request.sid]
+            await display.disconnect()
+            del vm_displays[request.sid]
+        logging.info('Client disconnected')
+        
+    eventlet.spawn(async_disconnect)
 
-@socketio.on('pointer_event')
-def handle_pointer_event(data):
-    """Handle pointer event."""
-    vm_name = data.get('vm_name')
-    x = data.get('x')
-    y = data.get('y')
-    button_mask = data.get('button_mask')
-    current_app.display_manager.send_pointer_event(vm_name, x, y, button_mask) 
-
-# Register Socket.IO event handlers
-def init_socketio(socketio):
-    socketio.on_event('connect_display', handle_connect_display)
-    socketio.on_event('disconnect_display', handle_disconnect_display)
-    socketio.on_event('key_event', handle_key_event)
-    socketio.on_event('pointer_event', handle_pointer_event)
-
-    @socketio.on('connect')
-    def handle_connect():
-        logging.info('Client connected')
-
-    @socketio.on('disconnect')
-    def handle_disconnect():
-        logging.info('Client disconnected') 
+@socketio.on('vm_input')
+def handle_vm_input(data):
+    """Handle VM input events from the client."""
+    async def async_input():
+        if request.sid not in vm_displays:
+            logging.warning(f'No display found for session {request.sid}')
+            return
+            
+        display = vm_displays[request.sid]
+        try:
+            await display.handle_input(data['type'], data)
+        except Exception as e:
+            logging.error(f'Error handling input event: {e}')
+            
+    eventlet.spawn(async_input) 
