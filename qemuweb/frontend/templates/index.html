@@ -84,10 +84,10 @@
                     </div>
 
                     <!-- VM Details/Display -->
-                    <div class="sm:col-span-2" :class="{'fixed inset-0 z-10 bg-gray-100 sm:static sm:z-0': selectedVM && isMobileView}">
-                        <div v-if="selectedVM" class="space-y-6">
+                    <div class="sm:col-span-2" :class="{'fixed inset-0 z-10 bg-gray-100 sm:static sm:z-0 overflow-y-auto': selectedVM && isMobileView}">
+                        <div v-if="selectedVM" class="space-y-6 min-h-full">
                             <!-- Mobile Back Button -->
-                            <div v-if="isMobileView" class="sm:hidden px-4 py-3 bg-white shadow">
+                            <div v-if="isMobileView" class="sm:hidden px-4 py-3 bg-white shadow sticky top-0 z-10">
                                 <button @click="selectedVM = null" class="flex items-center text-gray-600">
                                     <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
