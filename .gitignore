@@ -3,6 +3,7 @@ qemu_capabilities.json
 vm_logs/
 .DS_Store
 images/
+*.tar
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
