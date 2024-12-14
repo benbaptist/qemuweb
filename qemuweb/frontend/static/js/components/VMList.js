@@ -48,8 +48,8 @@ Vue.component('vm-list', {
                     class="px-4 py-4 hover:bg-gray-50 cursor-pointer"
                     :class="{'bg-indigo-50': selectedVM === vm.name}"
                     @click="selectVM(vm.name)">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center">
+                    <div class="flex items-center justify-between space-x-2 min-w-0">
+                        <div class="flex items-center min-w-0">
                             <div class="flex-shrink-0">
                                 <div class="h-3 w-3 rounded-full"
                                      :class="{
@@ -61,11 +61,11 @@ Vue.component('vm-list', {
                                      }">
                                 </div>
                             </div>
-                            <div class="ml-4">
-                                <div class="text-sm font-medium text-gray-900">
+                            <div class="ml-4 min-w-0">
+                                <div class="text-sm font-medium text-gray-900 truncate">
                                     {{ vm.name }}
                                 </div>
-                                <div class="text-sm text-gray-500">
+                                <div class="text-sm text-gray-500 truncate">
                                     {{ vm.arch }}
                                     <template v-if="vm.cpu_cores">
                                         • {{ vm.cpu_cores }} core<template v-if="vm.cpu_cores !== 1">s</template>
@@ -76,7 +76,7 @@ Vue.component('vm-list', {
                                 </div>
                             </div>
                         </div>
-                        <div class="flex space-x-2">
+                        <div class="flex-shrink-0 flex space-x-2 overflow-hidden">
                             <button v-if="getVMState(vm.name) !== 'running'"
                                     @click.stop="startVM(vm.name)"
                                     class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
