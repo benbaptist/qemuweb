@@ -12,39 +12,32 @@ A modern web interface for managing QEMU virtual machines. This application prov
 - Disk device management
 - VM configuration persistence
 - Real-time VM logs viewing
+- Command-line interface with configuration overrides
 
 ## Project Structure
 
 ```
 qemuweb/
-├── start.py                    # Entry point script
+├── setup.py                    # Package configuration
 ├── requirements.txt            # Dependencies
 ├── README.md                   # Documentation
 ├── qemuweb/                   # Main package directory
 │   ├── __init__.py
-│   ├── core/                  # Core QEMU interaction
+│   ├── cli.py                # Command-line interface
+│   ├── core/                 # Core QEMU interaction
 │   │   ├── __init__.py
-│   │   ├── machine.py        # VM management and lifecycle
-│   │   ├── capabilities.py   # QEMU capabilities handling
-│   │   └── vnc.py           # VNC connection handling
-│   ├── web/                  # Web application
+│   │   ├── machine.py       # VM management and lifecycle
+│   │   ├── capabilities.py  # QEMU capabilities handling
+│   │   └── vnc.py          # VNC connection handling
+│   ├── web/                 # Web application
 │   │   ├── __init__.py
-│   │   ├── app.py           # Flask application setup
-│   │   ├── routes.py        # API routes
-│   │   └── websocket.py     # WebSocket handling
-│   ├── config/              # Configuration management
+│   │   ├── app.py          # Flask application setup
+│   │   ├── routes.py       # API routes
+│   │   └── websocket.py    # WebSocket handling
+│   ├── config/             # Configuration management
 │   │   ├── __init__.py
-│   │   └── manager.py       # Config loading and validation
-│   └── frontend/            # Frontend assets
-│       ├── static/
-│       │   ├── js/
-│       │   │   ├── machine.js     # VM control interface
-│       │   │   ├── vnc.js         # VNC client logic
-│       │   │   └── websocket.js   # WebSocket client
-│       │   ├── css/
-│       │   └── img/
-│       └── templates/
-│           └── index.html    # Main template
+│   │   └── manager.py      # Config loading and validation
+│   └── frontend/           # Frontend assets
 ```
 
 ## Requirements
@@ -68,9 +61,9 @@ qemuweb/
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
-3. Install dependencies:
+3. Install the package:
    ```bash
-   pip install -r requirements.txt
+   pip install -e .
    ```
 
 4. Install QEMU and required system packages:
@@ -94,16 +87,33 @@ The application uses two main configuration files:
 
 These files will be created automatically with default values when you first run the application.
 
+Settings can be overridden via command-line arguments (see Usage section).
+
 ## Usage
 
-1. Start the application:
-   ```bash
-   python start.py
-   ```
+### Command Line Interface
+
+The `qemuweb` command will be available after installation. You can run it with various options:
+
+```bash
+# Run with default settings
+qemuweb
+
+# Override host and port
+qemuweb --host localhost --port 8000
+
+# Enable/disable debug mode
+qemuweb --debug
+qemuweb --no-debug
+```
+
+### Web Interface
+
+1. Start the application using the command above
 
 2. Open your web browser and navigate to:
    ```
-   http://localhost:5000
+   http://localhost:5000  # Or your configured host:port
    ```
 
 3. Create a new VM:
@@ -124,6 +134,7 @@ The project uses a modular structure:
 - `web/`: Contains the Flask web application
 - `config/`: Handles configuration management
 - `frontend/`: Contains all frontend assets
+- `cli.py`: Command-line interface implementation
 
 To contribute:
 
@@ -140,5 +151,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - QEMU team for the amazing virtualization software
 - Flask team for the web framework
+- Click team for the CLI framework
 - All contributors to the project
   
