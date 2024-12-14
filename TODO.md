@@ -1,6 +1,6 @@
 - [x] Setting manual VNC port doesn't work
 - [ ] Remote display support thru browser
-- [ ] Move "create VM" button to the right of the "Virtual machines" header
+- [x] Move "create VM" button to the right of the "Virtual machines" header
 - [ ] Thumbnail for running VM if available
     - [ ] Fetch every 10 seconds using whatever method is available
     - [ ] If headless is enabled, generate an image of the serial console
