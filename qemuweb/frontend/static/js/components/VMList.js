@@ -87,10 +87,6 @@ Vue.component('vm-list', {
                                     class="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-white bg-gray-600 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
                                 Stop
                             </button>
-                            <button @click.stop="deleteVM(vm.name)"
-                                    class="inline-flex items-center px-2.5 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                                Delete
-                            </button>
                         </div>
                     </div>
                 </li>

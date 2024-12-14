@@ -80,6 +80,7 @@ const app = new Vue({
         },
 
         async startVM(vmName) {
+            console.log(`Starting VM: ${vmName}`);
             try {
                 const response = await fetch(`/api/vms/${vmName}/start`, {
                     method: 'POST'
@@ -97,6 +98,7 @@ const app = new Vue({
         },
 
         async stopVM(vmName) {
+            console.log(`Stopping VM: ${vmName}`);
             try {
                 const response = await fetch(`/api/vms/${vmName}/stop`, {
                     method: 'POST'
