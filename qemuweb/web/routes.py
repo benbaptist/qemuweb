@@ -9,6 +9,7 @@ import platform
 import psutil
 import sys
 import atexit
+from eventlet.greenthread import GreenThread
 
 from .app import socketio, create_app
 from ..core.machine import VMConfig
@@ -19,29 +20,73 @@ bp = Blueprint('main', __name__)
 
 # Store active display connections
 vm_displays: Dict[str, VMDisplay] = {}
+shutdown_event = eventlet.event.Event()
 
-def cleanup_vms():
-    """Stop all running VMs on server shutdown."""
+def stop_vm_process(vm_name: str, process, timeout: int = 5):
+    """Helper function to stop a VM process."""
     try:
-        app = create_app()
-        with app.app_context():
-            if hasattr(current_app, 'vm_manager'):
-                logging.info("Server shutting down, stopping all VMs...")
-                for vm_name in current_app.vm_manager.vms:
-                    try:
-                        current_app.vm_manager.stop_vm(vm_name)
-                    except Exception as e:
-                        logging.error(f"Error stopping VM {vm_name}: {e}")
+        logging.info(f"Stopping VM: {vm_name}")
+        # First try graceful shutdown
+        process.terminate()
+        try:
+            process.wait(timeout=timeout)
+            return True
+        except:
+            logging.warning(f"VM {vm_name} did not stop gracefully, forcing...")
+            process.kill()
+            process.wait(timeout=1)
+            return True
     except Exception as e:
-        logging.error(f"Error during cleanup: {e}")
-    sys.exit(0)
+        logging.error(f"Error stopping VM {vm_name}: {e}")
+        return False
+
+def cleanup_resources():
+    """Clean up all resources."""
+    if not current_app:
+        return
+        
+    # Stop all VMs first
+    if hasattr(current_app, 'vm_manager'):
+        logging.info("Stopping all VMs...")
+        # Get list of running VMs
+        running_vms = [(name, vm) for name, vm in current_app.vm_manager.processes.items() if vm.poll() is None]
+        
+        # Stop each VM
+        for vm_name, process in running_vms:
+            stop_vm_process(vm_name, process)
+            
+    # Clean up display connections
+    for session_id, display in list(vm_displays.items()):
+        try:
+            logging.info(f"Cleaning up display for session {session_id}")
+            display.stop_streaming()
+            display.disconnect()
+        except Exception as e:
+            logging.error(f"Error cleaning up display for session {session_id}: {e}")
+    vm_displays.clear()
 
 def signal_handler(signo, frame):
     """Handle shutdown signals."""
-    cleanup_vms()
+    if shutdown_event.ready():  # If we're already shutting down, exit immediately
+        sys.exit(1)
+        
+    logging.info("Initiating shutdown...")
+    shutdown_event.send(True)  # Signal all workers to stop
+    
+    # Stop accepting new connections
+    if socketio and hasattr(socketio, 'server'):
+        try:
+            socketio.server.eio.shutdown()
+        except:
+            pass
+    
+    # Clean up resources
+    cleanup_resources()
+    
+    # Exit cleanly
+    sys.exit(0)
 
-# Register cleanup handlers
-atexit.register(cleanup_vms)
+# Register signal handlers
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
