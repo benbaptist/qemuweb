@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QEMU Web Manager</title>
+    <title>qemuweb</title>
     <!-- Styles -->
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
@@ -43,7 +43,7 @@
                 <!-- Header -->
                 <div class="flex justify-between items-center mb-6">
                     <div class="flex items-center space-x-4">
-                        <h1 class="text-3xl font-bold text-gray-900">QEMU Web Manager</h1>
+                        <h1 class="text-3xl font-bold text-gray-900">qemuweb</h1>
                         <nav class="flex space-x-4">
                             <button @click="currentView = 'vms'"
                                     :class="[
@@ -65,11 +65,6 @@
                             </button>
                         </nav>
                     </div>
-                    <button v-if="currentView === 'vms'"
-                            @click="showCreateModal = true"
-                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                        Create VM
-                    </button>
                 </div>
 
                 <!-- VM Management View -->
@@ -83,6 +78,7 @@
                             @select="selectVM"
                             @start="startVM"
                             @stop="stopVM"
+                            @create="showCreateModal = true"
                             @delete="deleteVM">
                         </vm-list>
                     </div>

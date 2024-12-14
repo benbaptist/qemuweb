@@ -33,9 +33,15 @@ Vue.component('vm-list', {
     template: `
         <div class="bg-white shadow rounded-lg">
             <div class="px-4 py-5 border-b border-gray-200 sm:px-6">
-                <h3 class="text-lg leading-6 font-medium text-gray-900">
-                    Virtual Machines
-                </h3>
+                <div class="flex justify-between items-center">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">
+                        Virtual Machines
+                    </h3>
+                    <button @click="$emit('create')"
+                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        Create VM
+                    </button>
+                </div>
             </div>
             <ul class="divide-y divide-gray-200">
                 <li v-for="vm in vms" :key="vm.name" 
