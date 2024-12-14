@@ -1,9 +1,15 @@
+import logging
+# Aggressively disable all web framework logging at the very start
+logging.getLogger('werkzeug').disabled = True
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+logging.getLogger('socketio').setLevel(logging.ERROR)
+logging.getLogger('engineio').setLevel(logging.ERROR)
+
 from flask import Flask
 from flask_socketio import SocketIO
-import eventlet
-import logging
 from logging.handlers import RotatingFileHandler
 import os
+import sys
 
 from ..config.manager import config, config_manager
 from ..core.machine import VMManager
@@ -11,7 +17,7 @@ from ..core.capabilities import QEMUCapabilities
 from ..core.vnc import DisplayManager
 
 # Initialize SocketIO without an app
-socketio = SocketIO()
+socketio = SocketIO(logger=False, engineio_logger=False)
 
 def setup_logging(app):
     """Configure logging for the application."""
@@ -27,17 +33,24 @@ def setup_logging(app):
     ))
     file_handler.setLevel(logging.INFO)
     
-    # Configure root logger
+    # Create console handler for our app logs
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s'
+    ))
+    console_handler.setLevel(logging.INFO)
+    
+    # Configure root logger for our application
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[file_handler]
+        format='%(asctime)s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[file_handler, console_handler]
     )
-    
-    # Disable Werkzeug logger (Flask access logs)
-    logging.getLogger('werkzeug').disabled = True
     
     # Set Flask logger to use our handlers
     app.logger.addHandler(file_handler)
+    app.logger.addHandler(console_handler)
     app.logger.setLevel(logging.INFO)
     app.logger.info('QEMUWeb startup')
 
@@ -54,8 +67,14 @@ def create_app():
     # Set up logging
     setup_logging(app)
     
-    # Initialize extensions
-    socketio.init_app(app, async_mode='eventlet')
+    # Initialize extensions with logging disabled
+    socketio.init_app(app, 
+                     logger=False, 
+                     engineio_logger=False,
+                     cors_allowed_origins="*",
+                     ping_timeout=5,
+                     ping_interval=25,
+                     log_output=False)
     
     with app.app_context():
         # Initialize global objects
