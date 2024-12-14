@@ -14,12 +14,24 @@ A modern web interface for managing QEMU virtual machines. This application prov
 - Real-time VM logs viewing
 - Command-line interface with configuration overrides
 - Automatic configuration management in ~/.config/qemuweb
+- Support for custom configuration directories
 
 ## Requirements
 
 - Python 3.8 or higher
 - QEMU
-- VNC client support in your browser
+- Python dependencies:
+  - `flask`
+  - `flask-socketio`
+  - `eventlet`
+  - `python-engineio`
+  - `python-socketio`
+  - `opencv-python`
+  - `numpy`
+  - `pillow`
+  - `psutil`
+  - `dataclasses-json`
+  - `websockify`
 
 ## Installation
 
@@ -54,7 +66,7 @@ A modern web interface for managing QEMU virtual machines. This application prov
 
 ## Configuration
 
-The application stores its configuration files in `~/.config/qemuweb/`:
+By default, the application stores its configuration files in `~/.config/qemuweb/`:
 
 1. `config.json`: General application settings
 2. `vm_configs.json`: Virtual machine configurations
@@ -64,7 +76,7 @@ These files will be automatically:
 - Migrated from the current directory if legacy configs are found
 - Updated with any missing default values when the application starts
 
-Settings can be overridden via command-line arguments (see Usage section).
+You can specify a custom configuration directory using the `--config-dir` option.
 
 ## Usage
 
@@ -82,6 +94,9 @@ qemuweb --host localhost --port 8000
 # Enable/disable debug mode
 qemuweb --debug
 qemuweb --no-debug
+
+# Use a custom configuration directory
+qemuweb --config-dir /path/to/custom/config
 ```
 
 ### Web Interface

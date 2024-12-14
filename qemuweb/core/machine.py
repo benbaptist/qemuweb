@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 import time
 import os
-from ..config.manager import config
+from ..config.manager import config_manager, DEFAULT_CONFIG
 
 @dataclass
 class DiskDevice:
@@ -82,8 +82,8 @@ class DisplayConfig:
 @dataclass
 class VMConfig:
     name: str
-    cpu: str = config['qemu']['default_cpu']
-    memory: int = config['qemu']['default_memory']
+    cpu: str = DEFAULT_CONFIG['qemu']['default_cpu']
+    memory: int = DEFAULT_CONFIG['qemu']['default_memory']
     cpu_cores: int = 1
     cpu_threads: int = 1
     network_type: str = "user"
@@ -94,7 +94,7 @@ class VMConfig:
     headless: bool = False
     display: DisplayConfig = field(default_factory=lambda: DisplayConfig())
     arch: str = "x86_64"
-    machine: str = config['qemu']['default_machine']
+    machine: str = DEFAULT_CONFIG['qemu']['default_machine']
     additional_args: List[str] = field(default_factory=list)
 
     def to_dict(self):
@@ -136,10 +136,13 @@ class VMConfig:
         else:
             config_data['display'] = DisplayConfig()  # Always default to VNC
 
+        # Get current config for defaults
+        current_config = config_manager.config
+
         # Ensure all fields have default values
         defaults = {
-            'cpu': config['qemu']['default_cpu'],
-            'memory': config['qemu']['default_memory'],
+            'cpu': current_config['qemu']['default_cpu'],
+            'memory': current_config['qemu']['default_memory'],
             'cpu_cores': 1,
             'cpu_threads': 1,
             'network_type': 'user',
@@ -148,7 +151,7 @@ class VMConfig:
             'enable_kvm': False,
             'headless': False,
             'arch': 'x86_64',
-            'machine': config['qemu']['default_machine'],
+            'machine': current_config['qemu']['default_machine'],
             'additional_args': []
         }
         
@@ -159,9 +162,6 @@ class VMConfig:
         return VMConfig(**config_data)
 
 class VMManager:
-    VM_CONFIG_FILE = 'vm_configs.json'
-    LOG_DIR = 'vm_logs'
-
     def __init__(self):
         self.vms: Dict[str, VMConfig] = {}
         self.processes: Dict[str, subprocess.Popen] = {}
@@ -170,10 +170,6 @@ class VMManager:
         self.status_callback = None
         self.stopped_callback = None
         
-        # Create log directory if it doesn't exist
-        if not os.path.exists(self.LOG_DIR):
-            os.makedirs(self.LOG_DIR)
-            
         self.load_vm_configs()
 
     def set_callbacks(self, status_callback, stopped_callback):
@@ -183,22 +179,17 @@ class VMManager:
     def load_vm_configs(self):
         """Load VM configurations from file."""
         try:
-            if Path(self.VM_CONFIG_FILE).exists():
-                with open(self.VM_CONFIG_FILE, 'r') as f:
-                    data = json.load(f)
-                    # Handle both old (dict) and new (list) formats
-                    if isinstance(data, dict):
-                        for name, config in data.items():
-                            vm_config = VMConfig.from_dict(config)
-                            self.vms[name] = vm_config
-                    else:  # list format
-                        for vm_data in data:
-                            vm_config = VMConfig.from_dict(vm_data)
-                            self.vms[vm_config.name] = vm_config
-                    logging.info(f"Loaded {len(self.vms)} VM configurations")
-            else:
-                logging.info("No VM configurations found, creating empty config file")
-                self.save_vm_configs()
+            data = config_manager.load_vm_configs()
+            # Handle both old (dict) and new (list) formats
+            if isinstance(data, dict):
+                for name, config in data.items():
+                    vm_config = VMConfig.from_dict(config)
+                    self.vms[name] = vm_config
+            else:  # list format
+                for vm_data in data:
+                    vm_config = VMConfig.from_dict(vm_data)
+                    self.vms[vm_config.name] = vm_config
+            logging.info(f"Loaded {len(self.vms)} VM configurations")
         except Exception as e:
             logging.error(f"Error loading VM configs: {str(e)}")
             self.vms = {}
@@ -207,8 +198,7 @@ class VMManager:
         """Save VM configurations to file."""
         try:
             data = [vm.to_dict() for vm in self.vms.values()]
-            with open(self.VM_CONFIG_FILE, 'w') as f:
-                json.dump(data, f, indent=4)
+            config_manager.save_vm_configs(data)
             logging.info(f"Saved {len(self.vms)} VM configurations")
         except Exception as e:
             logging.error(f"Error saving VM configs: {e}")
@@ -282,7 +272,7 @@ class VMManager:
             
             # Set up logging for the VM
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            log_path = os.path.join(self.LOG_DIR, f'{name}_{timestamp}.log')
+            log_path = config_manager.get_log_path(name, timestamp)
             log_file = open(log_path, 'w')
             logging.info(f"VM {name} logs will be written to {log_path}")
             

@@ -7,6 +7,7 @@ import logging
 
 from .app import socketio
 from ..core.machine import VMConfig
+from ..config.manager import config_manager
 
 bp = Blueprint('main', __name__)
 
@@ -95,11 +96,24 @@ def get_qemu_capabilities():
 @bp.route('/api/vms/<name>/logs', methods=['GET'])
 def get_vm_logs(name: str):
     """Get VM logs."""
-    log_path = Path('vm_logs') / f"{name}.log"
-    if log_path.exists():
-        with open(log_path, 'r') as f:
-            return jsonify({'logs': f.read()})
-    return jsonify({'logs': ''})
+    try:
+        # Get all log files for this VM, sorted by timestamp (newest first)
+        log_files = sorted(
+            config_manager.logs_dir.glob(f'{name}_*.log'),
+            key=lambda x: x.stat().st_mtime,
+            reverse=True
+        )
+        
+        if log_files:
+            # Read the most recent log file
+            with open(log_files[0], 'r') as f:
+                logs = f.readlines()
+            return jsonify({'success': True, 'logs': logs})
+        
+        return jsonify({'success': True, 'logs': []})
+    except Exception as e:
+        current_app.logger.error(f"Error reading logs for VM {name}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500  # Return 500 status code for server errors
 
 # WebSocket routes
 @socketio.on('connect_display')
