@@ -18,9 +18,10 @@ class VMDisplay:
         self.port = port
         self.client: Optional[vnc_api.VNCDoToolClient] = None
         self.connected = False
-        self.frame_interval = 1/30  # 30 FPS target
+        self.frame_interval = 1/10  # 10 FPS target
         self._last_frame = None
         self._running = False
+        self._buttons = 0  # Track button state locally
         logger.info(f"VMDisplay initialized with host={host}, port={port}")
         
     def connect_and_stream(self, sio: socketio.AsyncServer, room: str):
@@ -29,12 +30,30 @@ class VMDisplay:
             logger.info(f"Attempting to connect to VNC server at {self.host}:{self.port}")
             try:
                 logger.debug("Creating VNC client...")
-                # Use the high-level connect function
-                server = f"{self.host}::{self.port}"
-                self.client = vnc_api.connect(server)
+                # Create factory and client
+                factory = vnc_api.VNCDoToolFactory()
+                client = factory.protocol()
+                client.factory = factory
+                client.deferred = factory.deferred
+                
+                # Create a socket and connect
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((self.host, self.port))
+                
+                # Create transport
+                transport = vnc_api.rfb.RFBTransport(sock)
+                client.makeConnection(transport)
+                
+                # Store the client
+                self.client = client
                 if not self.client:
                     raise Exception("Failed to create VNC client")
                 logger.info("VNC client connection established")
+                
+                # Wait for initial screen update
+                logger.info("Waiting for initial screen update...")
+                eventlet.sleep(1)
+                
             except Exception as e:
                 logger.error(f"VNC connection failed: {e}", exc_info=True)
                 sio.emit('error', {'message': f'Failed to connect to VNC server: {str(e)}'}, room=room)
@@ -49,18 +68,32 @@ class VMDisplay:
             
             while self._running and self.connected:
                 try:
-                    logger.debug("Attempting to get frame...")
-                    # Capture the screen
-                    screen_data = io.BytesIO()
-                    screen_data.name = 'screenshot.png'  # Add filename with extension
-                    self.client.captureScreen(screen_data)
-                    screen_data.seek(0)
-                    
-                    # Load the image
-                    img = Image.open(screen_data)
-                    width, height = img.size
-                    
-                    logger.debug(f"Captured frame with dimensions {width}x{height}")
+                    # Get the raw screen data
+                    screen = self.client.screen
+                    if not screen or not hasattr(screen, 'data'):
+                        # Request a screen update
+                        try:
+                            self.client.framebufferUpdateRequest()
+                        except:
+                            pass
+                        eventlet.sleep(self.frame_interval)
+                        continue
+                        
+                    # Convert raw screen data to PIL Image
+                    try:
+                        raw_data = screen.data
+                        if not raw_data:
+                            logger.error("Screen data is empty")
+                            eventlet.sleep(self.frame_interval)
+                            continue
+                            
+                        img = Image.frombytes('RGB', (screen.width, screen.height), raw_data)
+                        width, height = img.size
+                        logger.debug(f"Captured frame {frames_sent + 1} with dimensions {width}x{height}")
+                    except Exception as e:
+                        logger.error(f"Failed to create image from screen data: {e}", exc_info=True)
+                        eventlet.sleep(self.frame_interval)
+                        continue
                     
                     # Convert to base64 encoded PNG
                     try:
@@ -74,7 +107,6 @@ class VMDisplay:
                     
                     # Only emit if the frame has changed
                     if img_b64 != self._last_frame:
-                        logger.debug(f"Sending frame {frames_sent + 1}")
                         try:
                             sio.emit('vm_frame', {
                                 'frame': img_b64,
@@ -84,13 +116,10 @@ class VMDisplay:
                             }, room=room)
                             self._last_frame = img_b64
                             frames_sent += 1
-                            logger.debug(f"Frame {frames_sent} sent successfully")
                         except Exception as e:
                             logger.error(f"Failed to emit frame: {e}", exc_info=True)
                             eventlet.sleep(self.frame_interval)
                             continue
-                    else:
-                        logger.debug("Frame unchanged, skipping")
                         
                 except Exception as e:
                     logger.error(f"Error in streaming loop: {e}", exc_info=True)
@@ -124,27 +153,50 @@ class VMDisplay:
             
         try:
             logger.debug(f"Handling input event: {event_type} with data: {data}")
+            
+            # Get current screen dimensions from protocol
+            protocol = self.client.protocol if hasattr(self.client, 'protocol') else self.client
+            screen = protocol.screen
+            if not screen:
+                logger.error("No screen available for input handling")
+                return
+                
+            max_x = min(screen.width - 1, 65535)  # Max 16-bit unsigned int
+            max_y = min(screen.height - 1, 65535)  # Max 16-bit unsigned int
+            
             if event_type == "mousemove":
-                x, y = data['x'], data['y']
-                self.client.mouseMove(x, y)
+                x = max(0, min(int(data['x']), max_x))
+                y = max(0, min(int(data['y']), max_y))
+                logger.debug(f"Mouse move to {x},{y}")
+                protocol.pointerEvent(x, y, self._buttons)
                 
             elif event_type == "mousedown":
-                x, y = data['x'], data['y']
-                button = data.get('button', 1)  # Default to left click
-                self.client.mousePress(x, y, button)
+                x = max(0, min(int(data['x']), max_x))
+                y = max(0, min(int(data['y']), max_y))
+                button = data.get('button', 0)  # Button index from 0
+                button_mask = 1 << button  # Convert to button mask
+                self._buttons |= button_mask  # Add button to mask
+                logger.debug(f"Mouse down at {x},{y} button {button} mask {button_mask}")
+                protocol.pointerEvent(x, y, self._buttons)
                 
             elif event_type == "mouseup":
-                x, y = data['x'], data['y']
-                button = data.get('button', 1)
-                self.client.mouseRelease(x, y, button)
+                x = max(0, min(int(data['x']), max_x))
+                y = max(0, min(int(data['y']), max_y))
+                button = data.get('button', 0)  # Button index from 0
+                button_mask = 1 << button  # Convert to button mask
+                self._buttons &= ~button_mask  # Remove button from mask
+                logger.debug(f"Mouse up at {x},{y} button {button} mask {button_mask}")
+                protocol.pointerEvent(x, y, self._buttons)
                 
             elif event_type == "keydown":
                 key = data['key']
-                self.client.keyPress(key)
+                logger.debug(f"Key down: {key}")
+                protocol.keyEvent(ord(key[0]) if len(key) == 1 else key, down=True)
                 
             elif event_type == "keyup":
                 key = data['key']
-                self.client.keyRelease(key)
+                logger.debug(f"Key up: {key}")
+                protocol.keyEvent(ord(key[0]) if len(key) == 1 else key, down=False)
                 
         except Exception as e:
             logger.error(f"Error handling input event {event_type}: {e}", exc_info=True)
