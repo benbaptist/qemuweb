@@ -70,7 +70,7 @@
                 <!-- VM Management View -->
                 <div v-if="currentView === 'vms'" class="grid grid-cols-1 sm:grid-cols-3 gap-6">
                     <!-- VM List -->
-                    <div class="sm:col-span-1">
+                    <div class="sm:col-span-1" :class="{'hidden sm:block': selectedVM && isMobileView}">
                         <vm-list
                             :vms="sortedVMs"
                             :vm-states="vmStates"
@@ -84,8 +84,17 @@
                     </div>
 
                     <!-- VM Details/Display -->
-                    <div class="sm:col-span-2">
+                    <div class="sm:col-span-2" :class="{'fixed inset-0 z-10 bg-gray-100 sm:static sm:z-0': selectedVM && isMobileView}">
                         <div v-if="selectedVM" class="space-y-6">
+                            <!-- Mobile Back Button -->
+                            <div v-if="isMobileView" class="sm:hidden px-4 py-3 bg-white shadow">
+                                <button @click="selectedVM = null" class="flex items-center text-gray-600">
+                                    <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                    Back to VM List
+                                </button>
+                            </div>
                             <!-- VM Details -->
                             <div v-if="!showingDisplay" class="bg-white shadow rounded-lg overflow-hidden">
                                 <vm-details

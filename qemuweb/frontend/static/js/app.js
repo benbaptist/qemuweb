@@ -17,7 +17,8 @@ const app = new Vue({
         vmLogs: [],
         logRefreshInterval: null,
         currentView: 'vms',
-        systemInfo: null
+        systemInfo: null,
+        windowWidth: window.innerWidth
     },
     computed: {
         selectedVMState() {
@@ -25,9 +26,15 @@ const app = new Vue({
         },
         sortedVMs() {
             return [...this.vms].sort((a, b) => a.name.localeCompare(b.name));
+        },
+        isMobileView() {
+            return this.windowWidth < 640; // matches sm breakpoint
         }
     },
     methods: {
+        handleResize() {
+            this.windowWidth = window.innerWidth;
+        },
         // VM Management
         async createVM(vmConfig) {
             try {
@@ -243,6 +250,7 @@ const app = new Vue({
         this.loadVMs();
         this.loadQEMUCapabilities();
         this.loadSystemInfo();
+        window.addEventListener('resize', this.handleResize);
 
         // WebSocket event listeners
         socket.on('vm_state_change', (data) => {
@@ -257,5 +265,6 @@ const app = new Vue({
         if (this.logRefreshInterval) {
             clearInterval(this.logRefreshInterval);
         }
+        window.removeEventListener('resize', this.handleResize);
     }
 }); 
