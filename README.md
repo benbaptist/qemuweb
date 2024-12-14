@@ -14,44 +14,17 @@ A modern web interface for managing QEMU virtual machines. This application prov
 - Real-time VM logs viewing
 - Command-line interface with configuration overrides
 
-## Project Structure
-
-```
-qemuweb/
-├── setup.py                    # Package configuration
-├── requirements.txt            # Dependencies
-├── README.md                   # Documentation
-├── qemuweb/                   # Main package directory
-│   ├── __init__.py
-│   ├── cli.py                # Command-line interface
-│   ├── core/                 # Core QEMU interaction
-│   │   ├── __init__.py
-│   │   ├── machine.py       # VM management and lifecycle
-│   │   ├── capabilities.py  # QEMU capabilities handling
-│   │   └── vnc.py          # VNC connection handling
-│   ├── web/                 # Web application
-│   │   ├── __init__.py
-│   │   ├── app.py          # Flask application setup
-│   │   ├── routes.py       # API routes
-│   │   └── websocket.py    # WebSocket handling
-│   ├── config/             # Configuration management
-│   │   ├── __init__.py
-│   │   └── manager.py      # Config loading and validation
-│   └── frontend/           # Frontend assets
-```
-
 ## Requirements
 
 - Python 3.8 or higher
 - QEMU
 - VNC client support in your browser
-- Websockify (for VNC over WebSocket)
 
 ## Installation
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/qemuweb.git
+   git clone https://github.com/benbaptist/qemuweb.git
    cd qemuweb
    ```
 
@@ -125,23 +98,6 @@ qemuweb --no-debug
    - Select the VM from the sidebar
    - Click the "Start" button
    - Once started, click "Connect Display" to access the VM console
-
-## Development
-
-The project uses a modular structure:
-
-- `core/`: Contains the core QEMU interaction logic
-- `web/`: Contains the Flask web application
-- `config/`: Handles configuration management
-- `frontend/`: Contains all frontend assets
-- `cli.py`: Command-line interface implementation
-
-To contribute:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
 
 ## License
 
