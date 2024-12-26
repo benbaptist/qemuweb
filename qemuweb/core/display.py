@@ -13,8 +13,13 @@ import atexit
 
 logger = logging.getLogger(__name__)
 
-# Make sure we clean up the VNC API on exit
-atexit.register(vnc_api.shutdown)
+# Don't register the shutdown handler since it causes issues with eventlet
+# We'll handle cleanup in the disconnect method instead
+
+class NamedBytesIO(io.BytesIO):
+    def __init__(self, *args, **kwargs):
+        self.name = 'screenshot.png'
+        super().__init__(*args, **kwargs)
 
 class VMDisplay:
     def __init__(self, host: str = "localhost", port: int = 5900):
@@ -53,26 +58,15 @@ class VMDisplay:
             
             while self._running and self.connected:
                 try:
-                    # Create a temporary file with .png extension for capture
-                    img_data = io.BytesIO()
-                    temp_path = f"/tmp/vnc_capture_{frames_sent}.png"
+                    # Create an in-memory buffer for the screen capture with a .png extension
+                    img_buffer = NamedBytesIO()
                     
-                    # Capture the screen to a PNG file with high quality
-                    self.client.captureScreen(temp_path)
+                    # Capture the screen directly to the buffer
+                    self.client.captureScreen(img_buffer)
+                    img_buffer.seek(0)
                     
-                    # Read the PNG file and convert to base64
-                    with open(temp_path, 'rb') as f:
-                        img_data = f.read()
-                        
-                    # Clean up the temporary file
-                    import os
-                    try:
-                        os.remove(temp_path)
-                    except:
-                        pass
-                        
                     # Convert to PIL Image for dimensions and processing
-                    img = Image.open(io.BytesIO(img_data))
+                    img = Image.open(img_buffer)
                     width, height = img.size
                     
                     # Convert to base64 with high quality

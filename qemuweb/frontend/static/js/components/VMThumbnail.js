@@ -69,6 +69,12 @@ Vue.component('vm-thumbnail', {
         
         async handleFrame(data) {
             try {
+                // Validate frame data
+                if (!data || !data.frame || !data.width || !data.height) {
+                    console.warn('Received invalid frame data:', data);
+                    return;
+                }
+
                 const img = new Image();
                 await new Promise((resolve, reject) => {
                     img.onload = resolve;
@@ -79,8 +85,8 @@ Vue.component('vm-thumbnail', {
                 // Update canvas size if needed while maintaining aspect ratio
                 const containerWidth = this.$el.clientWidth;
                 const scale = Math.min(1, containerWidth / data.width);
-                const width = data.width * scale;
-                const height = data.height * scale;
+                const width = Math.max(data.width * scale, 640);  // Ensure minimum width
+                const height = Math.max(data.height * scale, 360);  // Ensure minimum height
                 
                 if (this.canvas.width !== width || this.canvas.height !== height) {
                     this.canvas.width = width;
