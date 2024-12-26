@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 import time
 import os
+import atexit
 from ..config.manager import config_manager, DEFAULT_CONFIG
 
 @dataclass
@@ -171,6 +172,27 @@ class VMManager:
         self.stopped_callback = None
         
         self.load_vm_configs()
+        # Register cleanup on exit
+        atexit.register(self._cleanup_all_vms)
+        
+    def _cleanup_all_vms(self):
+        """Clean up all running VMs on program exit."""
+        logging.info("Cleaning up all running VMs...")
+        # Get list of running VMs first since we'll be modifying the processes dict
+        running_vms = [(name, process) for name, process in self.processes.items() if process.poll() is None]
+        
+        for vm_name, process in running_vms:
+            try:
+                logging.info(f"Stopping VM {vm_name} during cleanup")
+                self.stop_vm(vm_name)
+            except Exception as e:
+                logging.error(f"Error stopping VM {vm_name} during cleanup: {e}")
+                # Force kill if stop_vm failed
+                try:
+                    process.kill()
+                    process.wait(timeout=1)
+                except Exception as kill_error:
+                    logging.error(f"Error force killing VM {vm_name}: {kill_error}")
 
     def set_callbacks(self, status_callback, stopped_callback):
         self.status_callback = status_callback
@@ -392,9 +414,11 @@ class VMManager:
                     
                     # Include display information if available
                     if not vm_config.headless and hasattr(vm_config.display, 'port'):
-                        status['display'] = vm_config.display.to_dict()
+                        display_info = vm_config.display.to_dict()
+                        display_info['raw_port'] = vm_config.display.port  # Add the actual port number
+                        status['display'] = display_info
             except (psutil.NoSuchProcess, psutil.ZombieProcess, ProcessLookupError) as e:
-                logging.warning(f"Error getting process stats for VM {name}: {str(e)}")
+                logging.warning(f"Process monitoring error for VM {name}: {str(e)}")
                 self.processes.pop(name, None)
                 status['running'] = False
         
@@ -444,6 +468,7 @@ class VMManager:
                 vnc_options = [f"{vm.display.address}:{vnc_display}"]
                 if vm.display.password:
                     vnc_options.append("password=on")
+                # VNC mouse handling is managed by the USB tablet device above
                 cmd.extend(["-vnc", ",".join(vnc_options)])
             elif vm.display.type == "spice":
                 if vm.display.port is None:
