@@ -19,7 +19,7 @@
       </button>
     </div>
 
-    <div class="flex-1 overflow-hidden touch-none" ref="container" 
+    <div class="flex-1 flex items-center justify-center overflow-hidden touch-none" ref="container" 
          @wheel="handleWheel"
          @touchstart="handleTouchStart"
          @touchmove="handleTouchMove"

@@ -531,6 +531,10 @@ Vue.component('vm-details', {
                             <dt class="text-sm font-medium text-gray-500">Memory Usage</dt>
                             <dd class="text-sm text-gray-900 col-span-2">{{ Math.round(vm.memory_mb) }} MB</dd>
                         </div>
+                        <div v-if="vm.display && vm.display.port" class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">Display Port</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ vm.display.port }}</dd>
+                        </div>
                     </dl>
                 </template>
             </div>

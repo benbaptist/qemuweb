@@ -1,24 +1,35 @@
 <template>
-  <div class="fullscreen-vm-display" :class="{ 'keyboard-visible': keyboardVisible }">
-    <div class="toolbar">
-      <button @click="$emit('close')" class="btn">
-        <i class="fas fa-times"></i>
-      </button>
-      <div :class="['status', connected ? 'connected' : 'disconnected']">
-        {{ connected ? 'Connected' : 'Disconnected' }}
+  <div class="fullscreen-vm-display">
+    <div class="vm-controls">
+      <!-- Group controls on the right -->
+      <div class="control-group">
+        <!-- Scale dropdown -->
+        <div class="dropdown">
+          <button class="btn btn-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+            Scale
+          </button>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="#" @click="setScale(1)">100%</a></li>
+            <li><a class="dropdown-item" href="#" @click="setScale('fit')">Fit</a></li>
+            <li><a class="dropdown-item" href="#" @click="setScale('stretch')">Stretch</a></li>
+          </ul>
+        </div>
+        
+        <button class="btn btn-secondary" @click="toggleFullscreen">
+          <i class="fas" :class="isFullscreen ? 'fa-compress' : 'fa-expand'"></i>
+        </button>
+        
+        <button class="btn btn-secondary close-btn" @click="$emit('close')">
+          <i class="fas fa-times"></i>
+        </button>
       </div>
-      <button v-if="isTouchDevice" @click="toggleKeyboard" class="btn">
-        <i class="fas" :class="keyboardVisible ? 'fa-keyboard-o' : 'fa-keyboard'"></i>
-      </button>
     </div>
-
-    <div class="display-container" ref="container" @touchstart="handleTouchStart" @touchmove="handleTouchMove" @touchend="handleTouchEnd">
-      <canvas ref="canvas" tabindex="1" @contextmenu.prevent></canvas>
-    </div>
-
-    <div v-if="keyboardVisible && isTouchDevice" class="virtual-keyboard">
-      <!-- Virtual keyboard will be mounted here by the keyboard library -->
-    </div>
+    
+    <VMDisplay 
+      :vm="vm"
+      :scale="scale"
+      class="centered-display"
+    />
   </div>
 </template>
 
