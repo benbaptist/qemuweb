@@ -79,6 +79,10 @@ Vue.component('vm-details', {
             
             return Array.from(models).sort();
         },
+        getMachineTypes(arch) {
+            if (!this.qemuCapabilities || !arch) return [];
+            return this.qemuCapabilities.machine_types?.[arch] || [];
+        },
         startEditing() {
             // Start with a deep copy of the VM's config
             this.editedConfig = JSON.parse(JSON.stringify(this.vm.config || {}));
@@ -96,6 +100,7 @@ Vue.component('vm-details', {
                 rtc_base: this.editedConfig.rtc_base || 'utc',
                 enable_kvm: this.editedConfig.enable_kvm !== undefined ? this.editedConfig.enable_kvm : true,
                 headless: this.editedConfig.headless || false,
+                machine: this.editedConfig.machine || '',
                 disks: Array.isArray(this.editedConfig.disks) ? this.editedConfig.disks : [],
                 display: {
                     type: (this.editedConfig.display && this.editedConfig.display.type) || (this.qemuCapabilities?.has_spice ? 'spice' : 'vnc')
@@ -234,6 +239,16 @@ Vue.component('vm-details', {
                             <option v-for="arch in updateArchitectureOptions()" 
                                     :key="arch" 
                                     :value="arch">{{ arch }}</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Machine Type</label>
+                        <select v-model="editedConfig.machine" required
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option v-for="machine in getMachineTypes(editedConfig.arch)" 
+                                    :key="machine" 
+                                    :value="machine">{{ machine }}</option>
                         </select>
                     </div>
 

@@ -17,6 +17,7 @@ Vue.component('create-vm-modal', {
                 display: {
                     type: 'spice'
                 },
+                machine: '',
                 disks: []
             }
         }
@@ -38,6 +39,10 @@ Vue.component('create-vm-modal', {
             }
             
             return Array.from(models).sort();
+        },
+        getMachineTypes(arch) {
+            if (!this.qemuCapabilities || !arch) return [];
+            return this.qemuCapabilities.machine_types?.[arch] || [];
         },
         shouldShowCustomCPUInput(cpu, arch) {
             return cpu === '';
@@ -120,6 +125,16 @@ Vue.component('create-vm-modal', {
                             <option v-for="arch in updateArchitectureOptions()" 
                                     :key="arch" 
                                     :value="arch">{{ arch }}</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Machine Type</label>
+                        <select v-model="newVM.machine" required
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option v-for="machine in getMachineTypes(newVM.arch)" 
+                                    :key="machine" 
+                                    :value="machine">{{ machine }}</option>
                         </select>
                     </div>
 
