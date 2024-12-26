@@ -415,7 +415,7 @@ class VMManager:
                     # Include display information if available
                     if not vm_config.headless and hasattr(vm_config.display, 'port'):
                         display_info = vm_config.display.to_dict()
-                        display_info['raw_port'] = vm_config.display.port  # Add the actual port number
+                        display_info['port'] = vm_config.display.port  # The port is already the actual one being used
                         status['display'] = display_info
             except (psutil.NoSuchProcess, psutil.ZombieProcess, ProcessLookupError) as e:
                 logging.warning(f"Process monitoring error for VM {name}: {str(e)}")

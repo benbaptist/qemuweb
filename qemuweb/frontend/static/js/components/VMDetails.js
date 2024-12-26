@@ -502,11 +502,20 @@ Vue.component('vm-details', {
 
                 <!-- VM Thumbnail -->
                 <div v-if="!vmConfig.headless" class="mt-6">
-                    <h3 class="text-lg font-medium text-gray-900 mb-4">Display Preview</h3>
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-medium text-gray-900">Display Preview</h3>
+                        <button v-if="vmState === 'running'"
+                                @click="$emit('open-display')"
+                                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                            <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                            </svg>
+                            Open Display
+                        </button>
+                    </div>
                     <vm-thumbnail
                         :vm-id="vm.name"
-                        :vm-state="vmState"
-                        @click="toggleDisplay">
+                        :vm-state="vmState">
                     </vm-thumbnail>
                 </div>
 
@@ -527,12 +536,13 @@ Vue.component('vm-details', {
             </div>
 
             <!-- VM Display -->
-            <div v-if="displayActive" class="px-6">
+            <teleport to="body" v-if="displayActive">
                 <vm-display 
                     :vm-id="vm.name"
+                    @close="displayActive = false"
                     @error="$emit('error', $event)">
                 </vm-display>
-            </div>
+            </teleport>
         </div>
     `
 }); 

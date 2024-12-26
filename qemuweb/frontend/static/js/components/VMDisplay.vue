@@ -1,21 +1,31 @@
 <template>
-  <div class="vm-display">
-    <div class="toolbar">
-      <button @click="toggleFullscreen" class="btn">
-        <i class="fas fa-expand"></i>
-      </button>
-      <div :class="['status', connected ? 'connected' : 'disconnected']">
-        {{ connected ? 'Connected' : 'Disconnected' }}
+  <div class="fixed inset-0 bg-black flex flex-col">
+    <div class="absolute top-4 right-4 z-[101] flex gap-4">
+      <!-- Scale dropdown -->
+      <div class="relative">
+        <button @click="showScaleMenu = !showScaleMenu" class="bg-gray-800 text-white p-3 rounded-full shadow-lg hover:bg-gray-700 flex items-center justify-center">
+          <i class="fas fa-search text-xl"></i>
+        </button>
+        <div v-if="showScaleMenu" class="absolute right-0 mt-2 py-2 w-48 bg-gray-800 rounded-lg shadow-xl">
+          <button @click="setScale(1.0); showScaleMenu = false" class="block w-full px-4 py-2 text-white hover:bg-gray-700">100%</button>
+          <button @click="setScale(1.5); showScaleMenu = false" class="block w-full px-4 py-2 text-white hover:bg-gray-700">150%</button>
+          <button @click="setScale(2.0); showScaleMenu = false" class="block w-full px-4 py-2 text-white hover:bg-gray-700">200%</button>
+          <button @click="fitToWindow(); showScaleMenu = false" class="block w-full px-4 py-2 text-white hover:bg-gray-700">Fit to Window</button>
+        </div>
       </div>
+      <!-- Close button -->
+      <button @click="$emit('close')" class="bg-gray-800 text-white p-3 rounded-full shadow-lg hover:bg-gray-700 flex items-center justify-center">
+        <i class="fas fa-times text-xl"></i>
+      </button>
     </div>
 
-    <div class="display-container" ref="container">
-      <canvas ref="canvas" tabindex="1" @contextmenu.prevent></canvas>
-      <div class="scale-controls">
-        <button @click="setScale(1.0)" class="btn">100%</button>
-        <button @click="setScale(1.5)" class="btn">150%</button>
-        <button @click="setScale(2.0)" class="btn">200%</button>
-        <button @click="fitToWindow" class="btn">Fit</button>
+    <div class="flex-1 overflow-hidden touch-none" ref="container" 
+         @wheel="handleWheel"
+         @touchstart="handleTouchStart"
+         @touchmove="handleTouchMove"
+         @touchend="handleTouchEnd">
+      <div class="w-full h-full flex items-center justify-center" :style="transformStyle">
+        <canvas ref="canvas" tabindex="1" @contextmenu.prevent></canvas>
       </div>
     </div>
   </div>
@@ -40,10 +50,27 @@ export default {
       canvas: null,
       ctx: null,
       scale: 1.0,
+      panX: 0,
+      panY: 0,
       framesReceived: 0,
       connected: false,
-      resizeObserver: null
+      resizeObserver: null,
+      showScaleMenu: false,
+      touchState: {
+        lastTouchDistance: null,
+        lastPanPosition: null,
+        isPanning: false
+      }
     };
+  },
+
+  computed: {
+    transformStyle() {
+      return {
+        transform: `translate(${this.panX}px, ${this.panY}px) scale(${this.scale})`,
+        transformOrigin: 'center'
+      };
+    }
   },
   
   mounted() {
@@ -54,9 +81,7 @@ export default {
     
     // Setup resize observer
     this.resizeObserver = new ResizeObserver(() => {
-      if (this.canvas.style.transform.includes('scale')) {
-        this.fitToWindow();
-      }
+      this.fitToWindow();
     });
     this.resizeObserver.observe(this.$refs.container);
     
@@ -109,6 +134,7 @@ export default {
           console.log(`Resizing canvas to ${data.width}x${data.height}`);
           this.canvas.width = data.width;
           this.canvas.height = data.height;
+          this.fitToWindow(); // Refit after size change
         }
         
         // Clear and draw new frame
@@ -168,17 +194,102 @@ export default {
     
     setScale(scale) {
       this.scale = scale;
-      this.canvas.style.transform = `scale(${scale})`;
-      this.canvas.style.transformOrigin = 'top left';
-      console.log(`Display scale set to ${scale}`);
+      // Reset pan position when changing scale
+      this.panX = 0;
+      this.panY = 0;
     },
-    
+
+    handleWheel(e) {
+      if (e.ctrlKey) {
+        // Zoom
+        e.preventDefault();
+        const delta = e.deltaY * -0.01;
+        const newScale = Math.max(0.1, Math.min(5, this.scale + delta));
+        this.scale = newScale;
+      } else {
+        // Pan
+        this.panX -= e.deltaX;
+        this.panY -= e.deltaY;
+      }
+    },
+
+    handleTouchStart(e) {
+      if (e.touches.length === 2) {
+        // Pinch to zoom
+        const touch1 = e.touches[0];
+        const touch2 = e.touches[1];
+        this.touchState.lastTouchDistance = Math.hypot(
+          touch2.clientX - touch1.clientX,
+          touch2.clientY - touch1.clientY
+        );
+      } else if (e.touches.length === 1) {
+        // Pan
+        this.touchState.lastPanPosition = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY
+        };
+        this.touchState.isPanning = true;
+      }
+    },
+
+    handleTouchMove(e) {
+      e.preventDefault();
+      if (e.touches.length === 2) {
+        // Pinch to zoom
+        const touch1 = e.touches[0];
+        const touch2 = e.touches[1];
+        const distance = Math.hypot(
+          touch2.clientX - touch1.clientX,
+          touch2.clientY - touch1.clientY
+        );
+
+        if (this.touchState.lastTouchDistance) {
+          const delta = distance - this.touchState.lastTouchDistance;
+          const newScale = Math.max(0.1, Math.min(5, this.scale + delta * 0.01));
+          this.scale = newScale;
+        }
+
+        this.touchState.lastTouchDistance = distance;
+      } else if (e.touches.length === 1 && this.touchState.isPanning) {
+        // Pan
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - this.touchState.lastPanPosition.x;
+        const deltaY = touch.clientY - this.touchState.lastPanPosition.y;
+        
+        this.panX += deltaX;
+        this.panY += deltaY;
+
+        this.touchState.lastPanPosition = {
+          x: touch.clientX,
+          y: touch.clientY
+        };
+      }
+    },
+
+    handleTouchEnd() {
+      this.touchState.lastTouchDistance = null;
+      this.touchState.lastPanPosition = null;
+      this.touchState.isPanning = false;
+    },
+
     fitToWindow() {
       const container = this.$refs.container;
-      const scaleX = container.clientWidth / this.canvas.width;
-      const scaleY = container.clientHeight / this.canvas.height;
-      const scale = Math.min(scaleX, scaleY, 2.0); // Cap at 200%
-      this.setScale(scale);
+      if (!container || !this.canvas) return;
+
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      const canvasAspect = this.canvas.width / this.canvas.height;
+      const containerAspect = containerWidth / containerHeight;
+
+      if (containerAspect > canvasAspect) {
+        this.scale = containerHeight / this.canvas.height;
+      } else {
+        this.scale = containerWidth / this.canvas.width;
+      }
+
+      // Reset pan position
+      this.panX = 0;
+      this.panY = 0;
     },
     
     async toggleFullscreen() {
@@ -190,19 +301,19 @@ export default {
     },
     
     cleanup() {
-      // Remove event listeners
-      this.canvas.removeEventListener('mousemove', this.handleMouseMove);
-      this.canvas.removeEventListener('mousedown', this.handleMouseDown);
-      this.canvas.removeEventListener('mouseup', this.handleMouseUp);
+      if (this.canvas) {
+        this.canvas.removeEventListener('mousemove', this.handleMouseMove);
+        this.canvas.removeEventListener('mousedown', this.handleMouseDown);
+        this.canvas.removeEventListener('mouseup', this.handleMouseUp);
+      }
+      
       document.removeEventListener('keydown', this.handleKeyDown);
       document.removeEventListener('keyup', this.handleKeyUp);
       
-      // Disconnect socket
       if (this.socket) {
         this.socket.disconnect();
       }
       
-      // Cleanup resize observer
       if (this.resizeObserver) {
         this.resizeObserver.disconnect();
       }
@@ -212,60 +323,11 @@ export default {
 </script>
 
 <style scoped>
-.vm-display {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: var(--surface-ground);
-}
-
-.toolbar {
-  padding: 0.5rem;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  background: var(--surface-section);
-  border-bottom: 1px solid var(--surface-border);
-}
-
-.display-container {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
-  position: relative;
-}
-
 canvas {
   background: black;
-  box-shadow: 0 0 20px rgba(0,0,0,0.3);
 }
 
-canvas:focus {
-  outline: 2px solid var(--primary-color);
-}
-
-.scale-controls {
-  position: absolute;
-  bottom: 1rem;
-  right: 1rem;
-  background: var(--surface-overlay);
-  padding: 0.5rem;
-  border-radius: var(--border-radius);
-  display: flex;
-  gap: 0.5rem;
-}
-
-.status {
-  font-size: 0.875rem;
-}
-
-.status.connected {
-  color: var(--green-500);
-}
-
-.status.disconnected {
-  color: var(--red-500);
+.touch-none {
+  touch-action: none;
 }
 </style> 
