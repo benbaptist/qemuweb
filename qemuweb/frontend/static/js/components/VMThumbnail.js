@@ -17,36 +17,89 @@ Vue.component('vm-thumbnail', {
             connected: false,
             refreshInterval: null,
             lastFrameTime: 0,
-            maxWidth: 800  // Increased from 320 for higher resolution
+            maxWidth: 800,
+            isInitialized: false,
+            retryCount: 0,
+            maxRetries: 3
         };
     },
     mounted() {
-        this.canvas = this.$refs.canvas;
-        this.ctx = this.canvas.getContext('2d');
+        // Don't initialize canvas here, wait for vmState watcher
         if (this.vmState === 'running') {
-            this.setupSocket();
-            // Request a new frame every 2 seconds
-            this.refreshInterval = setInterval(() => {
-                if (this.connected && Date.now() - this.lastFrameTime > 1900) {
-                    this.socket.emit('request_frame', { vm_id: this.vmId });
-                }
-            }, 2000);
+            this.$nextTick(() => {
+                this.initializeCanvas();
+            });
         }
     },
     beforeDestroy() {
         this.cleanup();
     },
     watch: {
-        vmState(newState) {
-            if (newState === 'running' && !this.socket) {
-                this.setupSocket();
-            } else if (newState !== 'running' && this.socket) {
-                this.cleanup();
+        vmState: {
+            immediate: true,
+            handler(newState, oldState) {
+                if (newState === 'running') {
+                    this.$nextTick(() => {
+                        this.initializeCanvas();
+                        if (!this.socket) {
+                            this.initializeDisplay();
+                        }
+                    });
+                } else if (newState !== 'running' && this.socket) {
+                    this.cleanup();
+                }
             }
         }
     },
     methods: {
+        initializeCanvas() {
+            // Only initialize if canvas exists and isn't already initialized
+            const canvasEl = this.$refs.canvas;
+            if (canvasEl && !this.ctx) {
+                this.canvas = canvasEl;
+                this.ctx = this.canvas.getContext('2d');
+                console.log('Canvas initialized successfully');
+            }
+        },
+        initializeDisplay() {
+            if (!this.ctx) {
+                console.log('Waiting for canvas to be ready...');
+                setTimeout(() => {
+                    if (this.retryCount < this.maxRetries) {
+                        this.retryCount++;
+                        this.initializeDisplay();
+                    }
+                }, 500);
+                return;
+            }
+            
+            this.setupSocket();
+            
+            // Wait a bit before starting the refresh interval to allow VM to initialize
+            setTimeout(() => {
+                if (!this.isInitialized && this.retryCount < this.maxRetries) {
+                    console.log('Retrying display initialization...');
+                    this.retryCount++;
+                    this.cleanup();
+                    this.initializeDisplay();
+                    return;
+                }
+                
+                // Only set up refresh interval if we're initialized
+                if (this.isInitialized) {
+                    this.refreshInterval = setInterval(() => {
+                        if (this.connected && Date.now() - this.lastFrameTime > 1900) {
+                            this.socket.emit('request_frame', { vm_id: this.vmId });
+                        }
+                    }, 2000);
+                }
+            }, 2000);
+        },
         setupSocket() {
+            if (this.socket) {
+                this.cleanup();
+            }
+            
             this.socket = io();
             
             this.socket.on('connect', () => {
@@ -69,44 +122,62 @@ Vue.component('vm-thumbnail', {
         
         async handleFrame(data) {
             try {
-                // Validate frame data
-                if (!data || !data.frame || !data.width || !data.height) {
-                    console.warn('Received invalid frame data:', data);
-                    return;
+                if (!this.ctx) {
+                    return; // Canvas not ready yet
+                }
+                
+                if (!data || !data.frame || typeof data.width !== 'number' || typeof data.height !== 'number') {
+                    return;  // Silently ignore invalid frames during initialization
                 }
 
                 const img = new Image();
                 await new Promise((resolve, reject) => {
                     img.onload = resolve;
-                    img.onerror = reject;
+                    img.onerror = (error) => {
+                        console.error('Failed to load frame image:', error);
+                        reject(error);
+                    };
                     img.src = `data:image/png;base64,${data.frame}`;
                 });
                 
-                // Update canvas size if needed while maintaining aspect ratio
+                if (!this.$el || !this.canvas) {
+                    return;  // Component is not ready yet
+                }
+                
                 const containerWidth = this.$el.clientWidth;
+                if (!containerWidth) {
+                    return;  // Container not ready yet
+                }
+                
                 const scale = Math.min(1, containerWidth / data.width);
-                const width = Math.max(data.width * scale, 640);  // Ensure minimum width
-                const height = Math.max(data.height * scale, 360);  // Ensure minimum height
+                const width = Math.max(data.width * scale, 640);
+                const height = Math.max(data.height * scale, 360);
                 
                 if (this.canvas.width !== width || this.canvas.height !== height) {
                     this.canvas.width = width;
                     this.canvas.height = height;
                 }
                 
-                // Use high-quality image scaling
                 this.ctx.imageSmoothingEnabled = true;
                 this.ctx.imageSmoothingQuality = 'high';
                 
-                // Clear and draw new frame
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                 this.ctx.drawImage(img, 0, 0, width, height);
                 this.lastFrameTime = Date.now();
+                
+                // Mark as initialized after first successful frame
+                if (!this.isInitialized) {
+                    this.isInitialized = true;
+                    console.log('Thumbnail display initialized successfully');
+                }
             } catch (error) {
                 console.error('Error loading thumbnail frame:', error);
             }
         },
         
         cleanup() {
+            this.isInitialized = false;
+            this.retryCount = 0;
             if (this.refreshInterval) {
                 clearInterval(this.refreshInterval);
                 this.refreshInterval = null;
@@ -116,6 +187,7 @@ Vue.component('vm-thumbnail', {
                 this.socket = null;
             }
             this.connected = false;
+            this.ctx = null;  // Clear context reference
         }
     },
     template: `
