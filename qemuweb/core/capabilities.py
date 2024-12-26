@@ -67,13 +67,18 @@ class QEMUCapabilities:
         
         paths = os.environ['PATH'].split(os.pathsep)
         for path in paths:
-            if os.path.exists(path):
-                for file in os.listdir(path):
-                    match = arch_pattern.match(file)
-                    if match:
-                        arch = match.group(1)
-                        if arch not in architectures:
-                            architectures.append(arch)
+            try:
+                if os.path.exists(path):
+                    for file in os.listdir(path):
+                        match = arch_pattern.match(file)
+                        if match:
+                            arch = match.group(1)
+                            if arch not in architectures:
+                                architectures.append(arch)
+            except (PermissionError, OSError) as e:
+                # Skip directories we can't access and log at debug level since this is expected
+                logging.debug(f"Skipping directory {path} during architecture detection: {e}")
+                continue
         
         return sorted(architectures)
     
