@@ -43,7 +43,7 @@ class DiskDevice:
 @dataclass
 class DisplayConfig:
     type: str = "vnc"  # Will be set based on QEMU capabilities
-    address: str = "127.0.0.1"
+    address: str = "0.0.0.0"
     password: Optional[str] = None
     port: Optional[int] = None
     websocket_port: Optional[int] = None
@@ -70,7 +70,7 @@ class DisplayConfig:
         
         display = DisplayConfig(
             type=display_type,
-            address=data.get("address", "127.0.0.1"),
+            address=data.get("address", "0.0.0.0"),
             password=data.get("password")
         )
         if "port" in data:
@@ -468,7 +468,6 @@ class VMManager:
                 vnc_options = [f"{vm.display.address}:{vnc_display}"]
                 if vm.display.password:
                     vnc_options.append("password=on")
-                # VNC mouse handling is managed by the USB tablet device above
                 cmd.extend(["-vnc", ",".join(vnc_options)])
             elif vm.display.type == "spice":
                 if vm.display.port is None:

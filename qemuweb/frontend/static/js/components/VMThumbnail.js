@@ -16,7 +16,8 @@ Vue.component('vm-thumbnail', {
             ctx: null,
             connected: false,
             refreshInterval: null,
-            lastFrameTime: 0
+            lastFrameTime: 0,
+            maxWidth: 800  // Increased from 320 for higher resolution
         };
     },
     mounted() {
@@ -76,8 +77,8 @@ Vue.component('vm-thumbnail', {
                 });
                 
                 // Update canvas size if needed while maintaining aspect ratio
-                const maxWidth = 320;  // Maximum thumbnail width
-                const scale = Math.min(1, maxWidth / data.width);
+                const containerWidth = this.$el.clientWidth;
+                const scale = Math.min(1, containerWidth / data.width);
                 const width = data.width * scale;
                 const height = data.height * scale;
                 
@@ -85,6 +86,10 @@ Vue.component('vm-thumbnail', {
                     this.canvas.width = width;
                     this.canvas.height = height;
                 }
+                
+                // Use high-quality image scaling
+                this.ctx.imageSmoothingEnabled = true;
+                this.ctx.imageSmoothingQuality = 'high';
                 
                 // Clear and draw new frame
                 this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);

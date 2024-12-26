@@ -57,7 +57,7 @@ class VMDisplay:
                     img_data = io.BytesIO()
                     temp_path = f"/tmp/vnc_capture_{frames_sent}.png"
                     
-                    # Capture the screen to a PNG file
+                    # Capture the screen to a PNG file with high quality
                     self.client.captureScreen(temp_path)
                     
                     # Read the PNG file and convert to base64
@@ -71,12 +71,14 @@ class VMDisplay:
                     except:
                         pass
                         
-                    # Convert to PIL Image for dimensions
+                    # Convert to PIL Image for dimensions and processing
                     img = Image.open(io.BytesIO(img_data))
                     width, height = img.size
                     
-                    # Convert to base64
-                    img_b64 = base64.b64encode(img_data).decode('utf-8')
+                    # Convert to base64 with high quality
+                    output = io.BytesIO()
+                    img.save(output, format='PNG', optimize=False, quality=100)
+                    img_b64 = base64.b64encode(output.getvalue()).decode('utf-8')
                     
                     # Only emit if the frame has changed
                     if img_b64 != self._last_frame:
