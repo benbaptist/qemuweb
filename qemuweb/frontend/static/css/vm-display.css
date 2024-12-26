@@ -83,4 +83,38 @@ canvas:focus {
 
 .fade-enter, .fade-leave-to {
     opacity: 0;
+}
+
+/* VM Thumbnail Styles */
+.vm-thumbnail {
+    width: 100%;
+    margin-top: 1rem;
+}
+
+.vm-thumbnail canvas {
+    width: 100%;
+    height: auto;
+    background: black;
+    border-radius: var(--border-radius);
+}
+
+.vm-thumbnail .placeholder {
+    width: 100%;
+    height: 180px;
+    background: var(--surface-ground);
+    border: 1px solid var(--surface-border);
+}
+
+.vm-thumbnail .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.vm-thumbnail .status-dot.connected {
+    background-color: var(--green-500);
+}
+
+.vm-thumbnail .status-dot.disconnected {
+    background-color: var(--red-500);
 } 

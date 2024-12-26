@@ -500,6 +500,16 @@ Vue.component('vm-details', {
                     </div>
                 </dl>
 
+                <!-- VM Thumbnail -->
+                <div v-if="!vmConfig.headless" class="mt-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4">Display Preview</h3>
+                    <vm-thumbnail
+                        :vm-id="vm.name"
+                        :vm-state="vmState"
+                        @click="toggleDisplay">
+                    </vm-thumbnail>
+                </div>
+
                 <!-- Runtime Stats -->
                 <template v-if="vmState === 'running'">
                     <h3 class="text-lg font-medium text-gray-900 mt-8 mb-4">Runtime Statistics</h3>
