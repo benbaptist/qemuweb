@@ -123,7 +123,32 @@ const app = new Vue({
                     throw new Error(`Failed to load VMs: ${response.statusText}`);
                 }
                 const data = await response.json();
-                this.vms = data;
+                
+                // Normalize VM data structure
+                this.vms = data.map(vm => ({
+                    name: vm.name,
+                    arch: vm.arch || '',
+                    machine: vm.machine || '',
+                    cpu: vm.cpu || '',
+                    cpu_cores: vm.cpu_cores || 1,
+                    cpu_threads: vm.cpu_threads || 1,
+                    memory: vm.memory || 1024,
+                    network_type: vm.network_type || 'user',
+                    network_bridge: vm.network_bridge || '',
+                    rtc_base: vm.rtc_base || 'utc',
+                    enable_kvm: vm.enable_kvm ?? false,
+                    headless: vm.headless ?? false,
+                    display: {
+                        type: (vm.display && vm.display.type) || 'vnc'
+                    },
+                    disks: Array.isArray(vm.disks) ? vm.disks.map(disk => ({
+                        type: disk.type || 'disk',
+                        path: disk.path || '',
+                        interface: disk.interface || 'virtio',
+                        format: disk.format || 'qcow2',
+                        readonly: disk.readonly ?? false
+                    })) : []
+                }));
                 
                 // Load initial state for each VM
                 for (const vm of this.vms) {
@@ -167,8 +192,33 @@ const app = new Vue({
             }
         },
 
+        handleBrowseDisk(index) {
+            // Create a hidden file input element
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.qcow2,.img,.iso,.raw';
+            
+            // Handle file selection
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    // Update the disk path in the VM config
+                    if (this.showCreateModal) {
+                        this.$refs.createModal.newVM.disks[index].path = file.path;
+                    } else if (this.selectedVM) {
+                        const config = this.getSelectedVMConfig();
+                        config.disks[index].path = file.path;
+                        this.updateVM(config);
+                    }
+                }
+            };
+            
+            // Trigger file dialog
+            input.click();
+        },
+
         getSelectedVMConfig() {
-            return this.vms.find(vm => vm.name === this.selectedVM);
+            return this.vms.find(vm => vm.name === this.selectedVM) || null;
         },
 
         async updateVM(config) {

@@ -16,9 +16,10 @@ Vue.component('vm-details', {
     computed: {
         vmConfig() {
             if (!this.vm) return {};
-            return this.isEditing ? this.editedConfig : this.vm.config || {};
+            return this.isEditing ? this.editedConfig : this.vm;
         },
         displayType() {
+            if (!this.vmConfig) return 'None';
             if (this.vmConfig.headless) return 'Headless';
             if (!this.vmConfig.display) return 'None';
             return this.vmConfig.display.type || 'None';
@@ -30,6 +31,32 @@ Vue.component('vm-details', {
             const types = ['vnc']; // VNC is always available
             if (this.qemuCapabilities?.has_spice) types.push('spice');
             return types;
+        },
+        runtimeStats() {
+            if (!this.vm) return null;
+            return {
+                cpuUsage: typeof this.vm.cpu_usage === 'number' ? this.vm.cpu_usage.toFixed(1) : '0.0',
+                memoryMB: typeof this.vm.memory_mb === 'number' ? Math.round(this.vm.memory_mb) : 0,
+                displayPort: this.vm.display?.port
+            };
+        },
+        availableArchitectures() {
+            const archs = this.updateArchitectureOptions();
+            console.log('Available architectures:', archs);
+            console.log('Current arch:', this.editedConfig?.arch);
+            return archs;
+        },
+        availableMachineTypes() {
+            const types = this.getMachineTypes(this.editedConfig?.arch);
+            console.log('Available machine types:', types);
+            console.log('Current machine:', this.editedConfig?.machine);
+            return types;
+        },
+        availableCPUModels() {
+            const models = this.getCPUModels(this.editedConfig?.arch);
+            console.log('Available CPU models:', models);
+            console.log('Current CPU:', this.editedConfig?.cpu);
+            return models;
         }
     },
     data() {
@@ -43,9 +70,39 @@ Vue.component('vm-details', {
     watch: {
         'editedConfig.headless'(newValue) {
             if (!newValue && (!this.editedConfig.display || !this.editedConfig.display.type)) {
-                // When switching from headless to display mode, ensure display settings are initialized
                 this.editedConfig.display = this.editedConfig.display || {};
                 this.editedConfig.display.type = this.qemuCapabilities?.has_spice ? 'spice' : 'vnc';
+            }
+        },
+        'qemuCapabilities': {
+            immediate: true,
+            handler(newCaps) {
+                if (newCaps && this.editedConfig) {
+                    // If KVM is not available, disable it
+                    if (!newCaps.has_kvm && this.editedConfig.enable_kvm) {
+                        this.editedConfig.enable_kvm = false;
+                    }
+                }
+            }
+        },
+        'editedConfig.arch'(newArch) {
+            console.log('Architecture changed to:', newArch);
+            // Reset dependent fields when architecture changes
+            if (this.editedConfig) {
+                this.editedConfig.machine = '';
+                this.editedConfig.cpu = '';
+                // Wait for available options to update
+                this.$nextTick(() => {
+                    // Try to set machine type and CPU if they're available
+                    const machines = this.getMachineTypes(newArch);
+                    const cpus = this.getCPUModels(newArch);
+                    if (machines.length > 0) {
+                        this.editedConfig.machine = machines[0];
+                    }
+                    if (cpus.length > 0) {
+                        this.editedConfig.cpu = cpus[0];
+                    }
+                });
             }
         }
     },
@@ -63,7 +120,9 @@ Vue.component('vm-details', {
             }
         },
         updateArchitectureOptions() {
-            return this.qemuCapabilities?.architectures || [];
+            const archs = this.qemuCapabilities?.architectures || [];
+            console.log("Available architectures:", archs);
+            return archs;
         },
         getCPUModels(arch) {
             if (!this.qemuCapabilities || !arch) return [];
@@ -77,41 +136,57 @@ Vue.component('vm-details', {
                 models.add('host');
             }
             
-            return Array.from(models).sort();
+            // If the current CPU model isn't in the list but exists in the VM config, add it
+            if (this.vm.cpu && !models.has(this.vm.cpu)) {
+                models.add(this.vm.cpu);
+            }
+            
+            const sortedModels = Array.from(models).sort();
+            console.log("Available CPU models for", arch, ":", sortedModels);
+            return sortedModels;
         },
         getMachineTypes(arch) {
             if (!this.qemuCapabilities || !arch) return [];
-            return this.qemuCapabilities.machine_types?.[arch] || [];
-        },
-        startEditing() {
-            // Start with a deep copy of the VM's config
-            this.editedConfig = JSON.parse(JSON.stringify(this.vm.config || {}));
+            const types = this.qemuCapabilities.machine_types?.[arch] || [];
             
-            // Ensure all required properties exist with defaults
-            this.editedConfig = {
-                name: this.vm.name,
-                arch: this.editedConfig.arch || '',
-                cpu: this.editedConfig.cpu || '',
-                cpu_cores: this.editedConfig.cpu_cores || 1,
-                cpu_threads: this.editedConfig.cpu_threads || 1,
-                memory: this.editedConfig.memory || 1024,
-                network_type: this.editedConfig.network_type || 'user',
-                network_bridge: this.editedConfig.network_bridge || '',
-                rtc_base: this.editedConfig.rtc_base || 'utc',
-                enable_kvm: this.editedConfig.enable_kvm !== undefined ? this.editedConfig.enable_kvm : true,
-                headless: this.editedConfig.headless || false,
-                machine: this.editedConfig.machine || '',
-                disks: Array.isArray(this.editedConfig.disks) ? this.editedConfig.disks : [],
-                display: {
-                    type: (this.editedConfig.display && this.editedConfig.display.type) || (this.qemuCapabilities?.has_spice ? 'spice' : 'vnc')
-                }
-            };
-            
-            // Ensure VNC is selected if SPICE is not available and was previously selected
-            if (this.editedConfig.display.type === 'spice' && !this.qemuCapabilities?.has_spice) {
-                this.editedConfig.display.type = 'vnc';
+            // If the current machine type isn't in the list but exists in the VM config, add it
+            if (this.vm.machine && !types.includes(this.vm.machine)) {
+                types.push(this.vm.machine);
             }
             
+            console.log("Available machine types for", arch, ":", types);
+            return types;
+        },
+        startEditing() {
+            console.log("Starting edit with VM:", this.vm);
+            
+            // Create a deep copy of the VM with all required fields
+            this.editedConfig = {
+                name: this.vm.name,
+                arch: this.vm.arch,
+                machine: this.vm.machine,
+                cpu: this.vm.cpu,
+                cpu_cores: parseInt(this.vm.cpu_cores) || 1,
+                cpu_threads: parseInt(this.vm.cpu_threads) || 1,
+                memory: parseInt(this.vm.memory) || 1024,
+                network_type: this.vm.network_type || 'user',
+                network_bridge: this.vm.network_bridge || '',
+                rtc_base: this.vm.rtc_base || 'utc',
+                enable_kvm: this.vm.enable_kvm ?? false,
+                headless: this.vm.headless ?? false,
+                display: {
+                    type: (this.vm.display && this.vm.display.type) || 'vnc'
+                },
+                disks: Array.isArray(this.vm.disks) ? this.vm.disks.map(disk => ({
+                    type: disk.type || 'disk',
+                    path: disk.path || '',
+                    interface: disk.interface || 'virtio',
+                    format: disk.format || 'qcow2',
+                    readonly: disk.readonly ?? false
+                })) : []
+            };
+
+            console.log("Created editedConfig:", this.editedConfig);
             this.isEditing = true;
         },
         cancelEditing() {
@@ -256,7 +331,9 @@ Vue.component('vm-details', {
                         <label class="block text-sm font-medium text-gray-700">CPU Model</label>
                         <select v-model="editedConfig.cpu" required
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                            <option v-for="model in getCPUModels(editedConfig.arch)" :key="model" :value="model">{{ model }}</option>
+                            <option v-for="model in getCPUModels(editedConfig.arch)" 
+                                    :key="model" 
+                                    :value="model">{{ model }}</option>
                         </select>
                     </div>
 
@@ -525,15 +602,15 @@ Vue.component('vm-details', {
                     <dl class="space-y-6">
                         <div class="grid grid-cols-3 gap-4">
                             <dt class="text-sm font-medium text-gray-500">CPU Usage</dt>
-                            <dd class="text-sm text-gray-900 col-span-2">{{ vm.cpu_usage.toFixed(1) }}%</dd>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.cpuUsage }}%</dd>
                         </div>
                         <div class="grid grid-cols-3 gap-4">
                             <dt class="text-sm font-medium text-gray-500">Memory Usage</dt>
-                            <dd class="text-sm text-gray-900 col-span-2">{{ Math.round(vm.memory_mb) }} MB</dd>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.memoryMB }} MB</dd>
                         </div>
-                        <div v-if="vm.display && vm.display.port" class="grid grid-cols-3 gap-4">
+                        <div v-if="runtimeStats.displayPort" class="grid grid-cols-3 gap-4">
                             <dt class="text-sm font-medium text-gray-500">Display Port</dt>
-                            <dd class="text-sm text-gray-900 col-span-2">{{ vm.display.port }}</dd>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.displayPort }}</dd>
                         </div>
                     </dl>
                 </template>

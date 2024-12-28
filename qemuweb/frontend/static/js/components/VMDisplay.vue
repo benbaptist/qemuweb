@@ -1,6 +1,12 @@
 <template>
   <div class="fixed inset-0 bg-black flex flex-col">
     <div class="absolute top-4 right-4 z-[101] flex gap-4">
+      <!-- Mouse mode indicator -->
+      <div class="bg-gray-800 text-white px-3 py-2 rounded-lg shadow-lg flex items-center">
+        <i class="fas" :class="mouseState.isRelative ? 'fa-mouse' : 'fa-arrows-alt'"></i>
+        <span class="ml-2">{{ mouseState.isRelative ? 'Relative' : 'Absolute' }} Mouse (Ctrl+Alt+G)</span>
+      </div>
+      
       <!-- Scale dropdown -->
       <div class="relative">
         <button @click="showScaleMenu = !showScaleMenu" class="bg-gray-800 text-white p-3 rounded-full shadow-lg hover:bg-gray-700 flex items-center justify-center">
@@ -60,6 +66,11 @@ export default {
         lastTouchDistance: null,
         lastPanPosition: null,
         isPanning: false
+      },
+      mouseState: {
+        isRelative: false,
+        lastX: 0,
+        lastY: 0
       }
     };
   },
@@ -154,14 +165,48 @@ export default {
       // Keyboard events
       document.addEventListener('keydown', this.handleKeyDown);
       document.addEventListener('keyup', this.handleKeyUp);
+      
+      // Add pointer lock change listener
+      document.addEventListener('pointerlockchange', () => {
+        this.mouseState.isRelative = document.pointerLockElement === this.canvas;
+      });
+      
+      // Add keyboard shortcut for toggling mouse mode (Ctrl+Alt+G)
+      document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'g') {
+          this.toggleMouseMode();
+        }
+      });
     },
     
     handleMouseMove(e) {
-      if (!this.connected) return;
-      const rect = this.canvas.getBoundingClientRect();
-      const x = Math.floor((e.clientX - rect.left) / this.scale);
-      const y = Math.floor((e.clientY - rect.top) / this.scale);
-      this.socket.emit('vm_input', { type: 'mousemove', x, y });
+      if (!this.connected || document.activeElement !== this.canvas) return;
+      
+      let x, y;
+      if (this.mouseState.isRelative) {
+        // Calculate relative movement
+        x = e.movementX;
+        y = e.movementY;
+        
+        this.socket.emit('vm_input', { 
+          type: 'mousemove',
+          x: x,
+          y: y,
+          relative: true
+        });
+      } else {
+        // Absolute positioning
+        const rect = this.canvas.getBoundingClientRect();
+        x = Math.floor((e.clientX - rect.left) / this.scale);
+        y = Math.floor((e.clientY - rect.top) / this.scale);
+        
+        this.socket.emit('vm_input', { 
+          type: 'mousemove',
+          x: x,
+          y: y,
+          relative: false
+        });
+      }
     },
     
     handleMouseDown(e) {
@@ -316,6 +361,15 @@ export default {
       
       if (this.resizeObserver) {
         this.resizeObserver.disconnect();
+      }
+    },
+
+    toggleMouseMode() {
+      this.mouseState.isRelative = !this.mouseState.isRelative;
+      if (this.mouseState.isRelative) {
+        this.canvas.requestPointerLock();
+      } else {
+        document.exitPointerLock();
       }
     }
   }

@@ -12,13 +12,30 @@ Vue.component('create-vm-modal', {
                 network_type: 'user',
                 network_bridge: '',
                 rtc_base: 'utc',
-                enable_kvm: true,
+                enable_kvm: false,
                 headless: false,
                 display: {
                     type: 'spice'
                 },
                 machine: '',
                 disks: []
+            }
+        }
+    },
+    mounted() {
+        if (this.qemuCapabilities?.has_kvm) {
+            this.newVM.enable_kvm = true;
+        }
+    },
+    watch: {
+        qemuCapabilities: {
+            immediate: true,
+            handler(newCaps) {
+                if (newCaps) {
+                    if (!newCaps.has_kvm) {
+                        this.newVM.enable_kvm = false;
+                    }
+                }
             }
         }
     },
@@ -60,7 +77,7 @@ Vue.component('create-vm-modal', {
             this.newVM.disks.splice(index, 1);
         },
         browseDisk(index) {
-            // Implement file browsing functionality
+            // Implement file browser functionality
             this.$emit('browse-disk', index);
         },
         getFeatureStatus(feature) {

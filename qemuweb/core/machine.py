@@ -455,7 +455,7 @@ class VMManager:
         else:
             # Add USB controller and tablet for better mouse handling
             cmd.extend(["-device", "qemu-xhci,id=xhci"])  # USB 3.0 controller with ID
-            cmd.extend(["-device", "usb-tablet,bus=xhci.0"])  # Connect tablet to XHCI controller
+            cmd.extend(["-usbdevice", "tablet"])  # Connect tablet for relative mouse movement
             
             if vm.display.type == "vnc":
                 if vm.display.port is None:
