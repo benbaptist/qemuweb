@@ -11,6 +11,7 @@ import time
 import os
 import atexit
 from ..config.manager import config_manager, DEFAULT_CONFIG
+import uuid  # Import the uuid module
 
 @dataclass
 class DiskDevice:
@@ -46,6 +47,7 @@ class DisplayConfig:
     password: Optional[str] = None
     port: Optional[int] = None
     websocket_port: Optional[int] = None
+    relative_mouse: bool = True  # New field to toggle relative mouse mode
 
     def to_dict(self):
         return {
@@ -53,7 +55,8 @@ class DisplayConfig:
             "address": self.address,
             "password": self.password,
             "port": self.port,
-            "websocket_port": self.websocket_port
+            "websocket_port": self.websocket_port,
+            "relative_mouse": self.relative_mouse  # Include in dict
         }
 
     @staticmethod
@@ -70,7 +73,8 @@ class DisplayConfig:
         display = DisplayConfig(
             type=display_type,
             address=data.get("address", "0.0.0.0"),
-            password=data.get("password")
+            password=data.get("password"),
+            relative_mouse=data.get("relative_mouse", True)  # Set default to True
         )
         if "port" in data:
             display.port = int(data["port"]) if data["port"] else None
@@ -78,10 +82,32 @@ class DisplayConfig:
             display.websocket_port = int(data["websocket_port"]) if data["websocket_port"] else None
         return display
 
+@dataclass
+class GPUConfig:
+    enabled: bool = False
+    type: str = "virtio"  # virtio, vga, qxl
+    vram: int = 64  # VRAM in MB
+    
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "type": self.type,
+            "vram": self.vram
+        }
+    
+    @staticmethod
+    def from_dict(data):
+        return GPUConfig(
+            enabled=data.get("enabled", False),
+            type=data.get("type", "virtio"),
+            vram=data.get("vram", 64)
+        )
+
 @dataclass_json
 @dataclass
 class VMConfig:
     name: str
+    uuid: str = field(default_factory=lambda: str(uuid.uuid4()))  # Generate a unique UUID
     cpu: str = DEFAULT_CONFIG['qemu']['default_cpu']
     memory: int = DEFAULT_CONFIG['qemu']['default_memory']
     cpu_cores: int = 1
@@ -93,6 +119,7 @@ class VMConfig:
     enable_kvm: bool = False
     headless: bool = False
     display: DisplayConfig = field(default_factory=lambda: DisplayConfig())
+    gpu: GPUConfig = field(default_factory=lambda: GPUConfig())
     arch: str = "x86_64"
     machine: str = DEFAULT_CONFIG['qemu']['default_machine']
     additional_args: List[str] = field(default_factory=list)
@@ -109,6 +136,7 @@ class VMConfig:
     def to_dict(self):
         data = {
             'name': self.name,
+            'uuid': self.uuid,  # Include UUID in the dictionary
             'cpu': self.cpu,
             'memory': self.memory,
             'cpu_cores': self.cpu_cores,
@@ -120,6 +148,7 @@ class VMConfig:
             'enable_kvm': self.enable_kvm,
             'headless': self.headless,
             'display': self.display.to_dict(),
+            'gpu': self.gpu.to_dict(),
             'arch': self.arch,
             'machine': self.machine,
             'additional_args': self.additional_args,
@@ -145,6 +174,12 @@ class VMConfig:
             config_data['display'] = DisplayConfig(type="vnc", port=config_data.pop('vnc_port'))
         else:
             config_data['display'] = DisplayConfig()  # Always default to VNC
+
+        # Handle GPU configuration
+        if 'gpu' in config_data:
+            config_data['gpu'] = GPUConfig.from_dict(config_data['gpu'])
+        else:
+            config_data['gpu'] = GPUConfig()
 
         # Get current config for defaults
         current_config = config_manager.config
@@ -502,26 +537,34 @@ class VMManager:
         if vm.headless:
             cmd.append("-nographic")
         else:
-            # Add USB controller and tablet for better mouse handling
+            # Add USB controller
             cmd.extend(["-device", "qemu-xhci,id=xhci"])  # USB 3.0 controller with ID
-            cmd.extend(["-usbdevice", "tablet"])  # Connect tablet for relative mouse movement
             
+            # Check if relative mouse mode is enabled
+            if vm.display.relative_mouse:
+                cmd.extend(["-usbdevice", "tablet"])  # Connect tablet for relative mouse movement
+            else:
+                cmd.extend(["-usbdevice", "mouse"])  # Connect standard mouse
+            
+            # Handle display configuration
             if vm.display.type == "vnc":
                 if vm.display.port is None:
-                    # Find a free port in the VNC range
-                    success, port = self._find_free_port(5900, 6000)
+                    # Use the configured start port for VNC
+                    start_port = config_manager.config['vnc']['start_port']
+                    success, port = self._find_free_port(start_port, start_port + config_manager.config['vnc']['port_range'])
                     if not success:
                         raise RuntimeError("No free VNC ports available")
                     vm.display.port = port
-                vnc_display = vm.display.port - 5900
+                vnc_display = vm.display.port - config_manager.config['vnc']['start_port']
                 vnc_options = [f"{vm.display.address}:{vnc_display}"]
                 if vm.display.password:
                     vnc_options.append("password=on")
                 cmd.extend(["-vnc", ",".join(vnc_options)])
             elif vm.display.type == "spice":
                 if vm.display.port is None:
-                    # Find a free port in the SPICE range
-                    success, port = self._find_free_port(5930, 6030)
+                    # Use the configured start port for SPICE
+                    start_port = config_manager.config['spice']['start_port']
+                    success, port = self._find_free_port(start_port, start_port + config_manager.config['spice']['port_range'])
                     if not success:
                         raise RuntimeError("No free SPICE ports available")
                     vm.display.port = port
@@ -534,11 +577,9 @@ class VMManager:
                 if vm.display.password:
                     spice_options.append(f"password={vm.display.password}")
                 cmd.extend(["-spice", ",".join(spice_options)])
-                
-                # Add SPICE agent and GL support
-                cmd.extend(["-device", "virtio-serial"])
-                cmd.extend(["-chardev", "spicevmc,id=vdagent,name=vdagent"])
-                cmd.extend(["-device", "virtserialport,chardev=vdagent,name=com.redhat.spice.0"])
+            else:
+                # Default to standard VGA if no display type is specified
+                cmd.extend(["-vga", "std"])
         
         # Disks
         for disk in vm.disks:
