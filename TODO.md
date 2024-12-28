@@ -1,6 +1,5 @@
-- [x] Setting manual VNC port doesn't work
+- [ ] Graphics card settings 
 - [ ] Remote display support thru browser
-- [x] Move "create VM" button to the right of the "Virtual machines" header
 - [ ] Thumbnail for running VM if available
     - [ ] Fetch every 10 seconds using whatever method is available
     - [ ] If headless is enabled, generate an image of the serial console
@@ -9,8 +8,9 @@
     - [ ] Audio support (either direct from SPICE or some hacky way for VNC?)
     - [ ] USB support (maybe?)
 
-
 # Bug fixes
-- [ ] Ctrl+C on the server process doesn't stop all VMs prior to exiting
-- [x] Ctrl+C spews errors to the console
-- [ ] When VNC port is already in use, VM fails to start instead of dynamically selecting a new port
+- [ ] File browser not opening on new VM
+- [ ] No file browser button for disks when editing a VM
+- [ ] Can't disable KVM if it's enabled but not available
+- [ ] KVM should not be selected by default if it's not available
+- [ ] Relative mouse movement isn't working
