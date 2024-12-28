@@ -11,5 +11,4 @@
 # Bug fixes
 - [x] Create VM/Edit VM modal is vertically too tall
 - [ ] Broken CPU usage and memory usage stats
-- [ ] File browser not opening on new VM
-- [ ] No file browser button for disks when editing a VM
+- [ ] File browser not opening on editing a VM
