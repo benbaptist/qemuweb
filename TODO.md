@@ -11,6 +11,6 @@
 # Bug fixes
 - [ ] File browser not opening on new VM
 - [ ] No file browser button for disks when editing a VM
-- [ ] Can't disable KVM if it's enabled but not available (because it's disabled)
-- [ ] KVM should not be selected by default if it's not available (new VM)
-- [ ] Relative mouse movement isn't working
+- [x] Can't disable KVM if it's enabled but not available (because it's disabled)
+- [x] KVM should not be selected by default if it's not available (new VM)
+- [x] Relative mouse movement isn't working
