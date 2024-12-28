@@ -1,0 +1,44 @@
+{
+    "name": "QEMU Web Interface",
+    "short_name": "QEMU Web",
+    "description": "A web interface for managing QEMU virtual machines.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "rgb(79, 70, 229)",
+    "icons": [
+        {
+            "src": "/static/img/icons/vm-2048px-bg.png",
+            "sizes": "2048x2048",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/static/img/icons/vm-192px-bg.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/static/img/icons/vm-2048px.png",
+            "sizes": "2048x2048",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ],
+    "scope": "/",
+    "screenshots": [
+        {
+            "src": "/static/img/screenshots/mobile.png",
+            "sizes": "1082x2402",
+            "type": "image/png",
+            "form_factor": "narrow"
+        },
+        {
+            "src": "/static/img/screenshots/laptop.png",
+            "sizes": "1920x1279",
+            "type": "image/png",
+            "form_factor": "wide"
+        }
+    ]
+}
