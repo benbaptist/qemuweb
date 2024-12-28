@@ -18,7 +18,10 @@ const app = new Vue({
         logRefreshInterval: null,
         currentView: 'vms',
         systemInfo: null,
-        windowWidth: window.innerWidth
+        windowWidth: window.innerWidth,
+        showFileBrowser: false,
+        fileBrowserPath: '/',
+        fileBrowserCallback: null
     },
     computed: {
         selectedVMState() {
@@ -127,21 +130,22 @@ const app = new Vue({
                 // Normalize VM data structure
                 this.vms = data.map(vm => ({
                     name: vm.name,
-                    arch: vm.arch || '',
-                    machine: vm.machine || '',
-                    cpu: vm.cpu || '',
-                    cpu_cores: vm.cpu_cores || 1,
-                    cpu_threads: vm.cpu_threads || 1,
-                    memory: vm.memory || 1024,
-                    network_type: vm.network_type || 'user',
-                    network_bridge: vm.network_bridge || '',
-                    rtc_base: vm.rtc_base || 'utc',
-                    enable_kvm: vm.enable_kvm ?? false,
-                    headless: vm.headless ?? false,
+                    arch: vm.config.arch || '',
+                    machine: vm.config.machine || '',
+                    cpu: vm.config.cpu || '',
+                    cpu_cores: vm.config.cpu_cores || 1,
+                    cpu_threads: vm.config.cpu_threads || 1,
+                    memory: vm.config.memory || 1024,
+                    network_type: vm.config.network_type || 'user',
+                    network_bridge: vm.config.network_bridge || '',
+                    rtc_base: vm.config.rtc_base || 'utc',
+                    enable_kvm: vm.config.enable_kvm ?? false,
+                    headless: vm.config.headless ?? false,
                     display: {
-                        type: (vm.display && vm.display.type) || 'vnc'
+                        type: (vm.config.display && vm.config.display.type) || 'vnc',
+                        port: vm.config.display?.port || null
                     },
-                    disks: Array.isArray(vm.disks) ? vm.disks.map(disk => ({
+                    disks: Array.isArray(vm.config.disks) ? vm.config.disks.map(disk => ({
                         type: disk.type || 'disk',
                         path: disk.path || '',
                         interface: disk.interface || 'virtio',
@@ -192,29 +196,47 @@ const app = new Vue({
             }
         },
 
-        handleBrowseDisk(index) {
-            // Create a hidden file input element
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.qcow2,.img,.iso,.raw';
-            
-            // Handle file selection
-            input.onchange = (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    // Update the disk path in the VM config
+        async handleBrowseDisk(index) {
+            try {
+                // Get the current path from the disk if it exists
+                let currentPath = '';
+                const selectedVM = this.getSelectedVMConfig();
+                
+                if (this.showCreateModal) {
+                    const createModal = this.$root.$children.find(child => child.$options._componentTag === 'create-vm-modal');
+                    if (createModal && createModal.newVM.disks[index]) {
+                        currentPath = createModal.newVM.disks[index].path;
+                    }
+                } else if (selectedVM && selectedVM.disks[index]) {
+                    currentPath = selectedVM.disks[index].path;
+                }
+
+                // Show file browser modal
+                this.fileBrowserPath = currentPath;
+                this.fileBrowserCallback = (selectedPath) => {
                     if (this.showCreateModal) {
-                        this.$refs.createModal.newVM.disks[index].path = file.path;
-                    } else if (this.selectedVM) {
+                        const createModal = this.$root.$children.find(child => child.$options._componentTag === 'create-vm-modal');
+                        if (createModal) {
+                            createModal.newVM.disks[index].path = selectedPath;
+                        }
+                    } else if (selectedVM) {
                         const config = this.getSelectedVMConfig();
-                        config.disks[index].path = file.path;
+                        config.disks[index].path = selectedPath;
                         this.updateVM(config);
                     }
-                }
-            };
-            
-            // Trigger file dialog
-            input.click();
+                };
+                this.showFileBrowser = true;
+            } catch (error) {
+                this.errorMessage = error.message;
+            }
+        },
+
+        handleFileSelected(path) {
+            if (this.fileBrowserCallback) {
+                this.fileBrowserCallback(path);
+                this.fileBrowserCallback = null;
+            }
+            this.showFileBrowser = false;
         },
 
         getSelectedVMConfig() {

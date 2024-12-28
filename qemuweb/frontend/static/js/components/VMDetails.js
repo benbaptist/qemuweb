@@ -230,6 +230,25 @@ Vue.component('vm-details', {
                 }
             };
             return statuses[feature] || { available: false, label: feature, description: '' };
+        },
+        browseDisk(index) {
+            // Emit browse-disk event to parent
+            this.$emit('browse-disk', index);
+        },
+        addDisk() {
+            if (!this.editedConfig.disks) {
+                this.editedConfig.disks = [];
+            }
+            this.editedConfig.disks.push({
+                type: 'hdd',
+                interface: 'virtio',
+                path: '',
+                format: 'qcow2',
+                readonly: false
+            });
+        },
+        removeDisk(index) {
+            this.editedConfig.disks.splice(index, 1);
         }
     },
     template: `
@@ -441,8 +460,14 @@ Vue.component('vm-details', {
                                         </div>
                                         <div>
                                             <label class="block text-sm font-medium text-gray-700">Path</label>
-                                            <input v-model="disk.path" type="text" required
-                                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                            <div class="mt-1 flex rounded-md shadow-sm">
+                                                <input v-model="disk.path" type="text" required
+                                                       class="flex-1 rounded-l-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                                <button type="button" @click="browseDisk(index)"
+                                                        class="relative -ml-px inline-flex items-center space-x-2 rounded-r-md border border-gray-300 bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                                    Browse
+                                                </button>
+                                            </div>
                                         </div>
                                         <div>
                                             <label class="block text-sm font-medium text-gray-700">Interface</label>

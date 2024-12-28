@@ -194,6 +194,46 @@ class VMManager:
                 except Exception as kill_error:
                     logging.error(f"Error force killing VM {vm_name}: {kill_error}")
 
+    def list_directory(self, path: str = '/') -> Dict:
+        """List contents of a directory."""
+        try:
+            # Convert path to Path object and resolve it
+            path_obj = Path(path).resolve()
+            
+            # Get parent directory for navigation
+            parent = str(path_obj.parent)
+            
+            # List directory contents
+            entries = []
+            for entry in path_obj.iterdir():
+                try:
+                    is_dir = entry.is_dir()
+                    entries.append({
+                        'name': entry.name,
+                        'path': str(entry),
+                        'type': 'directory' if is_dir else 'file',
+                        'size': entry.stat().st_size if not is_dir else None
+                    })
+                except (PermissionError, OSError) as e:
+                    logging.warning(f"Error accessing {entry}: {e}")
+                    continue
+            
+            # Sort entries: directories first, then files, both alphabetically
+            entries.sort(key=lambda x: (x['type'] != 'directory', x['name'].lower()))
+            
+            return {
+                'current_path': str(path_obj),
+                'parent_path': parent if str(path_obj) != '/' else None,
+                'entries': entries
+            }
+        except Exception as e:
+            logging.error(f"Error listing directory {path}: {e}")
+            return {
+                'current_path': str(path),
+                'error': str(e),
+                'entries': []
+            }
+
     def set_callbacks(self, status_callback, stopped_callback):
         self.status_callback = status_callback
         self.stopped_callback = stopped_callback

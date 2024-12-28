@@ -34,8 +34,17 @@
             :show="showCreateModal"
             :qemu-capabilities="qemuCapabilities"
             @close="showCreateModal = false"
-            @create="createVM">
+            @create="createVM"
+            @browse-disk="handleBrowseDisk">
         </create-vm-modal>
+
+        <!-- File Browser Modal -->
+        <file-browser-modal
+            :show="showFileBrowser"
+            :current-path="fileBrowserPath"
+            @close="showFileBrowser = false"
+            @select="handleFileSelected">
+        </file-browser-modal>
 
         <!-- Main Content -->
         <div class="py-6">
@@ -160,8 +169,11 @@
     <script src="/static/js/components/VMLogs.js"></script>
     <script src="/static/js/components/StatusPage.js"></script>
     <script src="/static/js/components/VMThumbnail.js"></script>
-    
-    <!-- Main Application Script -->
-    <script src="/static/js/app.js"></script>
+    <script src="{{ url_for('static', filename='js/components/VMDisplay.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/VMDetails.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/VMList.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/CreateVMModal.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/components/FileBrowserModal.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html> 
