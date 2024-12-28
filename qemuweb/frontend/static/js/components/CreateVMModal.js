@@ -16,7 +16,8 @@ Vue.component('create-vm-modal', {
                 headless: this.vmData?.headless || false,
                 display: {
                     type: this.vmData?.display?.type || 
-                          (this.qemuCapabilities?.has_spice ? 'spice' : 'vnc')
+                          (this.qemuCapabilities?.has_spice ? 'spice' : 'vnc'),
+                    relative_mouse: this.vmData?.display?.relative_mouse || true
                 },
                 machine: this.vmData?.machine || '',
                 disks: this.vmData?.disks || []
@@ -248,20 +249,28 @@ Vue.component('create-vm-modal', {
                         </div>
 
                         <!-- Display Configuration -->
-                        <div v-if="!newVM.headless" class="flex items-center space-x-4">
-                            <div class="flex items-center">
-                                <input v-model="newVM.display.type" type="radio" value="spice"
-                                       :disabled="!qemuCapabilities?.has_spice"
-                                       class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                <label class="ml-2 block text-sm text-gray-700">
-                                    SPICE
-                                    <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
-                                </label>
+                        <div class="border rounded-lg p-4">
+                            <h3 class="text-lg font-medium">Display Configuration</h3>
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center">
+                                    <input v-model="newVM.display.type" type="radio" value="spice"
+                                           :disabled="!qemuCapabilities?.has_spice"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">
+                                        SPICE
+                                        <span v-if="!qemuCapabilities?.has_spice" class="text-yellow-600">(not available)</span>
+                                    </label>
+                                </div>
+                                <div class="flex items-center">
+                                    <input v-model="newVM.display.type" type="radio" value="vnc"
+                                           class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    <label class="ml-2 block text-sm text-gray-700">VNC</label>
+                                </div>
                             </div>
-                            <div class="flex items-center">
-                                <input v-model="newVM.display.type" type="radio" value="vnc"
-                                       class="rounded-full border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                <label class="ml-2 block text-sm text-gray-700">VNC</label>
+                            <div class="flex items-center mt-4">
+                                <input v-model="newVM.display.relative_mouse" type="checkbox" 
+                                       class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                <label class="ml-2 block text-sm text-gray-700">Use Relative Mouse</label>
                             </div>
                         </div>
 
