@@ -48,7 +48,16 @@ Vue.component('vm-details', {
         }
     },
     template: `
-        <div class="space-y-6">
+        <div class="space-y-6 pb-6">
+            
+            <!-- VM Thumbnail -->
+            <div v-if="!vm.headless" class="-mb-6">
+                <vm-thumbnail
+                    :vm-id="vm.name"
+                    :vm-state="vmState">
+                </vm-thumbnail>
+            </div>
+
             <!-- Header with dropdown menu -->
             <div class="px-6 py-5 border-b border-gray-200">
                 <div class="flex justify-between items-center">
@@ -64,7 +73,7 @@ Vue.component('vm-details', {
                             {{ vmState.charAt(0).toUpperCase() + vmState.slice(1) }}
                         </span>
                     </div>
-                    <div class="relative">
+                    <div>
                         <button @click="showMenu = !showMenu"
                                 class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                             Actions
@@ -215,15 +224,6 @@ Vue.component('vm-details', {
                     </dl>
                 </div>
             </template>
-
-            <!-- VM Thumbnail -->
-            <div v-if="!vm.headless" class="px-6 mt-6">
-                <h3 class="text-lg font-medium text-gray-900">Display Preview</h3>
-                <vm-thumbnail
-                    :vm-id="vm.name"
-                    :vm-state="vmState">
-                </vm-thumbnail>
-            </div>
         </div>
     `
 }); 

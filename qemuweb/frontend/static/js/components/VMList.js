@@ -66,12 +66,13 @@ Vue.component('vm-list', {
                                     {{ vm.name }}
                                 </div>
                                 <div class="text-sm text-gray-500 truncate">
-                                    {{ vm.arch }}
-                                    <template v-if="vm.cpu_cores">
-                                        • {{ vm.cpu_cores }} core<template v-if="vm.cpu_cores !== 1">s</template>
-                                    </template>
-                                    <template v-if="vm.memory">
-                                        • {{ vm.memory }} MB RAM
+                                    <template v-if="getVMState(vm.name) === 'running'">
+                                        <template v-if="vm.cpu_usage">
+                                            {{ vm.cpu_usage.toFixed(1) }}% CPU Usage
+                                        </template>
+                                        <template v-if="vm.memory_usage">
+                                            • {{ vm.memory_usage }} MB Memory Usage
+                                        </template>
                                     </template>
                                 </div>
                             </div>

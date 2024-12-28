@@ -5,7 +5,6 @@ import threading
 import subprocess
 import psutil
 import logging
-import json
 from pathlib import Path
 from datetime import datetime
 import time
@@ -97,6 +96,15 @@ class VMConfig:
     arch: str = "x86_64"
     machine: str = DEFAULT_CONFIG['qemu']['default_machine']
     additional_args: List[str] = field(default_factory=list)
+    qmp_socket: str = field(init=False)  # Make this field non-initializable directly
+
+    def __post_init__(self):
+        # Create the directory for QMP sockets if it doesn't exist
+        os.makedirs('/tmp/qmp_sockets', exist_ok=True)
+        
+        # Generate a unique QMP socket path based on the VM name
+        safe_name = self.name.replace(" ", "_")  # Replace spaces with underscores for safety
+        self.qmp_socket = f"/tmp/qmp_sockets/{safe_name}.qmp"  # Set a unique socket path
 
     def to_dict(self):
         data = {
@@ -114,7 +122,8 @@ class VMConfig:
             'display': self.display.to_dict(),
             'arch': self.arch,
             'machine': self.machine,
-            'additional_args': self.additional_args
+            'additional_args': self.additional_args,
+            'qmp_socket': self.qmp_socket
         }
         return data
 
@@ -547,6 +556,9 @@ class VMManager:
         
         # Additional arguments
         cmd.extend(vm.additional_args)
+        
+        # QMP support (always enabled)
+        cmd.extend(["-qmp", f"unix:{vm.qmp_socket},server,nowait"])
         
         return cmd
 

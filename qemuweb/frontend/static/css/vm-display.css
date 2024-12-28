@@ -88,7 +88,6 @@ canvas:focus {
 /* VM Thumbnail Styles */
 .vm-thumbnail {
     width: 100%;
-    margin-top: 1rem;
 }
 
 .vm-thumbnail canvas {
@@ -126,7 +125,7 @@ canvas:focus {
     width: 100vw;
     height: 100vh;
     background: #000;
-    z-index: 1050;
+    /* z-index: 1050; */
     display: flex;
     flex-direction: column;
 }

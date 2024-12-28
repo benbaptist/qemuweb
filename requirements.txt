@@ -10,3 +10,4 @@ psutil==5.9.5
 dataclasses-json==0.6.1
 websockify>=0.11.0
 vncdotool>=1.1.0
+qemu.qmp

@@ -104,9 +104,9 @@ Vue.component('create-vm-modal', {
     },
     template: `
         <div v-if="show" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
-            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
                 <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold">Create New VM</h2>
+                    <h2 class="text-2xl font-bold">{{ vmData ? 'Edit VM' : 'Create New VM' }}</h2>
                     <button @click="$emit('close')" class="text-gray-600 hover:text-gray-800">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -325,7 +325,7 @@ Vue.component('create-vm-modal', {
                     <div class="flex justify-end">
                         <button type="submit" 
                                 class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
-                            Create VM
+                            {{ vmData ? 'Save Changes' : 'Create VM' }}
                         </button>
                     </div>
                 </form>

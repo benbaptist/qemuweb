@@ -149,9 +149,9 @@ Vue.component('vm-thumbnail', {
                     return;  // Container not ready yet
                 }
                 
-                const scale = Math.min(1, containerWidth / data.width);
-                const width = Math.max(data.width * scale, 640);
-                const height = Math.max(data.height * scale, 360);
+                const scale = Math.min(containerWidth / data.width, 1);
+                const width = data.width * scale;
+                const height = data.height * scale;
                 
                 if (this.canvas.width !== width || this.canvas.height !== height) {
                     this.canvas.width = width;
@@ -192,7 +192,7 @@ Vue.component('vm-thumbnail', {
     },
     template: `
         <div class="vm-thumbnail">
-            <div v-if="vmState === 'running'" class="relative">
+            <div v-if="vmState === 'running'">
                 <canvas ref="canvas" class="rounded-lg shadow-md"></canvas>
                 <div class="absolute top-2 right-2">
                     <div :class="['status-dot', connected ? 'connected' : 'disconnected']"></div>
