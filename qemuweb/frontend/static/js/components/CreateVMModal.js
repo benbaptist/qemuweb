@@ -15,7 +15,8 @@ Vue.component('create-vm-modal', {
                 enable_kvm: this.vmData?.enable_kvm || false,
                 headless: this.vmData?.headless || false,
                 display: {
-                    type: this.vmData?.display?.type || 'spice'
+                    type: this.vmData?.display?.type || 
+                          (this.qemuCapabilities?.has_spice ? 'spice' : 'vnc')
                 },
                 machine: this.vmData?.machine || '',
                 disks: this.vmData?.disks || []
@@ -34,6 +35,9 @@ Vue.component('create-vm-modal', {
                 if (newCaps) {
                     if (!newCaps.has_kvm) {
                         this.newVM.enable_kvm = false;
+                    }
+                    if (!newCaps.has_spice && this.newVM.display.type === 'spice') {
+                        this.newVM.display.type = 'vnc';
                     }
                 }
             }
