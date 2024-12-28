@@ -51,7 +51,7 @@ Vue.component('vm-details', {
         <div class="space-y-6 pb-6">
             
             <!-- VM Thumbnail -->
-            <div v-if="!vm.headless" class="-mb-6">
+            <div v-if="!vm.headless && vmState === 'running'" class="-mb-6">
                 <vm-thumbnail
                     :vm-id="vm.name"
                     :vm-state="vmState">

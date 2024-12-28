@@ -20,7 +20,8 @@ Vue.component('vm-thumbnail', {
             maxWidth: 800,
             isInitialized: false,
             retryCount: 0,
-            maxRetries: 3
+            maxRetries: 3,
+            loading: true,
         };
     },
     mounted() {
@@ -111,6 +112,7 @@ Vue.component('vm-thumbnail', {
             this.socket.on('disconnect', () => {
                 console.log('Thumbnail socket disconnected');
                 this.connected = false;
+                this.loading = true;
             });
             
             this.socket.on('error', (error) => {
@@ -121,6 +123,8 @@ Vue.component('vm-thumbnail', {
         },
         
         async handleFrame(data) {
+            this.loading = false;
+
             try {
                 if (!this.ctx) {
                     return; // Canvas not ready yet
@@ -193,7 +197,8 @@ Vue.component('vm-thumbnail', {
     template: `
         <div class="vm-thumbnail">
             <div v-if="vmState === 'running'">
-                <canvas ref="canvas" class="rounded-lg shadow-md"></canvas>
+                <div v-if="loading" class="spinner-loader"></div>
+                <canvas ref="canvas" class="rounded-lg shadow-md" v-show="!loading"></canvas>
                 <div class="absolute top-2 right-2">
                     <div :class="['status-dot', connected ? 'connected' : 'disconnected']"></div>
                 </div>
