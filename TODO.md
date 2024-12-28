@@ -1,9 +1,9 @@
 - [ ] Graphics card settings 
-- [ ] Remote display support thru browser
 - [ ] Thumbnail for running VM if available
     - [ ] Fetch every 10 seconds using whatever method is available
     - [ ] If headless is enabled, generate an image of the serial console
-- [ ] Once remote desktop is implemented
+- [ ] In-browser Remote Desktop
+    - [ ] SPICE support for better performance
     - [ ] Game Controller support, via mapping mouse and keyboard and via direct gamepad passthrough
     - [ ] Audio support (either direct from SPICE or some hacky way for VNC?)
     - [ ] USB support (maybe?)
