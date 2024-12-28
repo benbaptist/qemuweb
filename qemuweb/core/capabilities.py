@@ -14,6 +14,7 @@ class QEMUCapabilities:
         self.architectures: List[str] = []
         self.cpu_models: Dict[str, List[str]] = {}
         self.machine_types: Dict[str, List[str]] = {}
+        self.display_devices: Dict[str, List[str]] = {}
         self.error = None
         
         self._detect_capabilities()
@@ -50,9 +51,17 @@ class QEMUCapabilities:
             for arch in self.architectures:
                 self.cpu_models[arch] = self._get_cpu_models(arch)
                 self.machine_types[arch] = self._get_machine_types(arch)
+                self.display_devices[arch] = self._get_display_devices(arch)
                 logging.debug(f"Architecture {arch}:")
                 logging.debug(f"  CPU models: {', '.join(self.cpu_models[arch])}")
                 logging.debug(f"  Machine types: {', '.join(self.machine_types[arch])}")
+                logging.debug(f"  Display devices: {', '.join(self.display_devices[arch])}")
+
+            # Detect available display devices
+            all_display_devices = set()
+            for arch, devices in self.display_devices.items():
+                all_display_devices.update(devices)
+            logging.info(f"Available display devices: {', '.join(all_display_devices)}")
             
             self.available = True
             
@@ -137,6 +146,41 @@ class QEMUCapabilities:
         except:
             return []
     
+    def _get_display_devices(self, arch: str) -> List[str]:
+        """Get available display devices for an architecture."""
+        try:
+            result = subprocess.run([f'qemu-system-{arch}', '-device', 'help'],
+                                 capture_output=True, text=True)
+            devices = []
+            
+            # Common display device patterns to look for
+            display_patterns = [
+                r'VGA compatible controller',
+                r'Display controller',
+                r'virtio-gpu',
+                r'qxl',
+                r'cirrus-vga',
+                r'ati-vga',
+                r'vmware-svga',
+                r'bochs-display',
+                r'ramfb'
+            ]
+            
+            for line in result.stdout.split('\n'):
+                line = line.lower()
+
+                for pattern in display_patterns:
+                    if re.search(pattern.lower(), line):
+                        # Extract the device name (first word in the line)
+                        device_name = line.split()[1][1:-2]
+                        if device_name not in devices:
+                            devices.append(device_name)
+            
+            return sorted(devices)
+        except Exception as e:
+            logging.error(f"Error detecting display devices for {arch}: {e}")
+            return []
+    
     def to_dict(self) -> Dict:
         """Convert capabilities to dictionary."""
         return {
@@ -147,5 +191,6 @@ class QEMUCapabilities:
             'architectures': self.architectures,
             'cpu_models': self.cpu_models,
             'machine_types': self.machine_types,
+            'display_devices': self.display_devices,
             'error': self.error
         }
