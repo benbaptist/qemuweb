@@ -74,7 +74,10 @@ Vue.component('create-vm-modal', {
             this.newVM.disks.splice(index, 1);
         },
         browseDisk(index) {
-            this.$emit('browse-disk', index);
+            const diskPath = this.newVM.disks[index].path;
+            console.log(`Browsing disk at index ${index}, path: ${diskPath}`);
+            const parentDir = diskPath ? diskPath.substring(0, diskPath.lastIndexOf('/')) : '';
+            this.$emit('browse-disk', index, parentDir);
         },
         getFeatureStatus(feature) {
             const statuses = {

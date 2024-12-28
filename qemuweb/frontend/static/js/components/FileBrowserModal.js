@@ -56,6 +56,10 @@ Vue.component('file-browser-modal', {
             if (this.parentPath) {
                 this.loadDirectory(this.parentPath);
             }
+        },
+        openDirectory(directory) {
+            this.currentPath = directory;
+            this.loadDirectory(directory);
         }
     },
     template: `
@@ -142,5 +146,12 @@ Vue.component('file-browser-modal', {
                 </div>
             </div>
         </div>
-    `
+    `,
+    mounted() {
+        console.log('FileBrowserModal mounted and ready to listen for events');
+        this.$on('browse-disk', (index, parentDir) => {
+            console.log(`Browse disk event received for index ${index}, parentDir: ${parentDir}`);
+            this.openDirectory(parentDir);
+        });
+    }
 }); 
