@@ -1,24 +1,24 @@
 Vue.component('create-vm-modal', {
-    props: ['show', 'qemuCapabilities'],
+    props: ['show', 'qemuCapabilities', 'vmData'],
     data() {
         return {
             newVM: {
-                name: '',
-                arch: '',
-                cpu: '',
-                cpu_cores: 1,
-                cpu_threads: 1,
-                memory: 1024,
-                network_type: 'user',
-                network_bridge: '',
-                rtc_base: 'utc',
-                enable_kvm: false,
-                headless: false,
+                name: this.vmData?.name || '',
+                arch: this.vmData?.arch || '',
+                cpu: this.vmData?.cpu || '',
+                cpu_cores: this.vmData?.cpu_cores || 1,
+                cpu_threads: this.vmData?.cpu_threads || 1,
+                memory: this.vmData?.memory || 1024,
+                network_type: this.vmData?.network_type || 'user',
+                network_bridge: this.vmData?.network_bridge || '',
+                rtc_base: this.vmData?.rtc_base || 'utc',
+                enable_kvm: this.vmData?.enable_kvm || false,
+                headless: this.vmData?.headless || false,
                 display: {
-                    type: 'spice'
+                    type: this.vmData?.display?.type || 'spice'
                 },
-                machine: '',
-                disks: []
+                machine: this.vmData?.machine || '',
+                disks: this.vmData?.disks || []
             }
         }
     },
@@ -97,6 +97,9 @@ Vue.component('create-vm-modal', {
         },
         createVM() {
             this.$emit('create', this.newVM);
+        },
+        updateVM() {
+            this.$emit('update', this.newVM);
         }
     },
     template: `
@@ -127,7 +130,7 @@ Vue.component('create-vm-modal', {
                     </div>
                 </div>
                 
-                <form @submit.prevent="createVM" class="space-y-4">
+                <form @submit.prevent="vmData ? updateVM() : createVM()" class="space-y-4">
                     <!-- Basic VM Configuration -->
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Name</label>
