@@ -4,24 +4,26 @@ const socket = io();
 // Main Vue application
 const app = new Vue({
     el: '#app',
-    data: {
-        errorMessage: null,
-        successMessage: null,
-        showCreateModal: false,
-        qemuCapabilities: null,
-        vms: [],
-        selectedVM: null,
-        vmStates: {},
-        displayConnections: {},
-        showingDisplay: false,
-        vmLogs: [],
-        logRefreshInterval: null,
-        currentView: 'vms',
-        systemInfo: null,
-        windowWidth: window.innerWidth,
-        showFileBrowser: false,
-        fileBrowserPath: '/',
-        fileBrowserCallback: null
+    data() {
+        return {
+            vms: [],
+            selectedVM: null,
+            showCreateModal: false,
+            qemuCapabilities: null,
+            error: null,
+            vmStates: {},
+            displayConnections: {},
+            showingDisplay: false,
+            vmLogs: [],
+            logRefreshInterval: null,
+            currentView: 'vms',
+            systemInfo: null,
+            windowWidth: window.innerWidth,
+            showFileBrowser: false,
+            fileBrowserPath: '/',
+            fileBrowserCallback: null,
+            loading: false
+        };
     },
     computed: {
         selectedVMState() {
@@ -340,5 +342,150 @@ const app = new Vue({
             clearInterval(this.logRefreshInterval);
         }
         window.removeEventListener('resize', this.handleResize);
-    }
+    },
+    template: `
+        <div class="h-screen flex overflow-hidden bg-gray-100">
+            <!-- Sidebar -->
+            <div class="hidden md:flex md:flex-shrink-0">
+                <div class="flex flex-col w-64">
+                    <div class="flex flex-col h-0 flex-1">
+                        <div class="flex-1 flex flex-col overflow-y-auto">
+                            <nav class="flex-1 px-2 py-4 bg-white space-y-1">
+                                <a href="#" @click.prevent="currentView = 'vms'"
+                                   :class="['group flex items-center px-2 py-2 text-sm font-medium rounded-md',
+                                           currentView === 'vms' 
+                                           ? 'bg-gray-100 text-gray-900' 
+                                           : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900']">
+                                    <svg class="mr-3 flex-shrink-0 h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                              d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                    </svg>
+                                    Virtual Machines
+                                </a>
+                                <a href="#" @click.prevent="currentView = 'status'"
+                                   :class="['group flex items-center px-2 py-2 text-sm font-medium rounded-md',
+                                           currentView === 'status' 
+                                           ? 'bg-gray-100 text-gray-900' 
+                                           : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900']">
+                                    <svg class="mr-3 flex-shrink-0 h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                    </svg>
+                                    System Status
+                                </a>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main content -->
+            <div class="flex flex-col w-0 flex-1 overflow-hidden">
+                <main class="flex-1 relative overflow-y-auto focus:outline-none">
+                    <div class="py-6">
+                        <!-- VM Config Modal -->
+                        <vm-config-modal
+                            v-if="showCreateModal"
+                            :show="showCreateModal"
+                            :qemu-capabilities="qemuCapabilities"
+                            mode="create"
+                            @close="showCreateModal = false"
+                            @create="createVM"
+                            @browse-disk="handleBrowseDisk"
+                        />
+
+                        <!-- Error Alert -->
+                        <div v-if="error" class="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 mb-4">
+                            <div class="bg-red-50 border-l-4 border-red-400 p-4">
+                                <div class="flex">
+                                    <div class="flex-shrink-0">
+                                        <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                                        </svg>
+                                    </div>
+                                    <div class="ml-3">
+                                        <p class="text-sm text-red-700">{{ error }}</p>
+                                    </div>
+                                    <div class="ml-auto pl-3">
+                                        <button @click="error = null" class="inline-flex text-red-400 hover:text-red-500">
+                                            <span class="sr-only">Dismiss</span>
+                                            <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
+                            <div v-if="currentView === 'vms'" class="flex justify-between items-center">
+                                <h1 class="text-2xl font-semibold text-gray-900">Virtual Machines</h1>
+                                <button @click="showCreateModal = true"
+                                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+                                    Create VM
+                                </button>
+                            </div>
+                            <div v-else-if="currentView === 'status'" class="flex justify-between items-center">
+                                <h1 class="text-2xl font-semibold text-gray-900">System Status</h1>
+                            </div>
+                        </div>
+
+                        <div class="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
+                            <div class="py-4">
+                                <div v-if="currentView === 'vms'" class="flex">
+                                    <!-- VM List -->
+                                    <div class="w-1/3 pr-4 border-r">
+                                        <div v-if="vms.length === 0" class="text-center py-4">
+                                            <p class="text-gray-500">No virtual machines found</p>
+                                        </div>
+                                        <div v-else class="space-y-2">
+                                            <div v-for="vm in sortedVMs" :key="vm.name"
+                                                 @click="selectedVM = vm"
+                                                 class="p-4 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                                 :class="{'bg-gray-50': selectedVM && selectedVM.name === vm.name}">
+                                                <div class="flex justify-between items-center">
+                                                    <h3 class="text-lg font-medium text-gray-900">{{ vm.name }}</h3>
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                                          :class="{
+                                                              'bg-green-100 text-green-800': vmStates[vm.name] === 'running',
+                                                              'bg-red-100 text-red-800': vmStates[vm.name] === 'stopped',
+                                                              'bg-yellow-100 text-yellow-800': vmStates[vm.name] === 'error'
+                                                          }">
+                                                        {{ vmStates[vm.name] }}
+                                                    </span>
+                                                </div>
+                                                <div class="mt-1 text-sm text-gray-500">
+                                                    {{ vm.arch }} / {{ vm.machine }}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- VM Details -->
+                                    <div v-if="selectedVM" class="w-2/3 pl-4">
+                                        <vm-details
+                                            :vm="selectedVM"
+                                            :vm-state="vmStates[selectedVM.name]"
+                                            :qemu-capabilities="qemuCapabilities"
+                                            @update="updateVM"
+                                            @error="handleError"
+                                            @browse-disk="handleBrowseDisk"
+                                            @open-display="openDisplay">
+                                        </vm-details>
+                                    </div>
+                                    <div v-else class="w-2/3 pl-4 flex items-center justify-center">
+                                        <p class="text-gray-500">Select a VM to view details</p>
+                                    </div>
+                                </div>
+                                <div v-else-if="currentView === 'status'">
+                                    <status-page :system-info="systemInfo"></status-page>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    `
 }); 
