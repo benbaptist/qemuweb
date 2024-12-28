@@ -545,6 +545,10 @@ Vue.component('vm-details', {
                         <dd class="text-sm text-gray-900 col-span-2">{{ vmConfig.arch }}</dd>
                     </div>
                     <div class="grid grid-cols-3 gap-4">
+                        <dt class="text-sm font-medium text-gray-500">Machine Type</dt>
+                        <dd class="text-sm text-gray-900 col-span-2">{{ vmConfig.machine }}</dd>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4">
                         <dt class="text-sm font-medium text-gray-500">CPU Model</dt>
                         <dd class="text-sm text-gray-900 col-span-2">{{ vmConfig.cpu }}</dd>
                     </div>
