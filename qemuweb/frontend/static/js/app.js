@@ -143,7 +143,8 @@ const app = new Vue({
                     headless: vm.config.headless ?? false,
                     display: {
                         type: (vm.config.display && vm.config.display.type) || 'vnc',
-                        port: vm.config.display?.port || null
+                        port: vm.config.display?.port || null,
+                        relative_mouse: vm.config.display?.relative_mouse ?? true
                     },
                     disks: Array.isArray(vm.config.disks) ? vm.config.disks.map(disk => ({
                         type: disk.type || 'disk',
