@@ -68,7 +68,7 @@ Vue.component('vm-display', {
             </div>
             
             <!-- Display Area -->
-            <div class="flex-1 flex items-center justify-center overflow-hidden touch-none" ref="container" 
+            <div class="flex-1 overflow-hidden touch-none" ref="container" 
                 @wheel.prevent="handleWheel"
                 @mousedown.prevent="handleContainerMouseDown"
                 @mousemove.prevent="handleContainerMouseMove"
