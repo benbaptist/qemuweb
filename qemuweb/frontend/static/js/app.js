@@ -34,6 +34,15 @@ const app = new Vue({
             return this.windowWidth < 640; // matches sm breakpoint
         }
     },
+    watch: {
+        showingDisplay(newValue, oldValue) {
+            console.log(`[App.js] showingDisplay changed from ${oldValue} to ${newValue}`);
+            if (newValue === true) {
+                console.log('[App.js] current selectedVM:', this.selectedVM);
+                console.log('[App.js] current vmStates[this.selectedVM]:', this.vmStates[this.selectedVM]);
+            }
+        }
+    },
     methods: {
         handleResize() {
             this.windowWidth = window.innerWidth;

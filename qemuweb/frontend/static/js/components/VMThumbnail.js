@@ -194,6 +194,7 @@ Vue.component('vm-thumbnail', {
             this.ctx = null;  // Clear context reference
         },
         expandVM() {
+            console.log('[VMThumbnail] expandVM called for vmId:', this.vmId);
             this.$emit('expand-vm', this.vmId);
         }
     },
