@@ -138,6 +138,9 @@ class VMDisplay:
             if event_type == "mousemove":
                 x = int(data['x'])
                 y = int(data['y'])
+                # Clamp coordinates to valid range for VNC (unsigned short: 0-65535)
+                x = max(0, min(x, 65535))
+                y = max(0, min(y, 65535))
                 logger.debug(f"Mouse move to {x},{y}")
                 self.client.mouseMove(x, y)
                 if self._buttons > 0:
@@ -146,6 +149,9 @@ class VMDisplay:
             elif event_type == "mousedown":
                 x = int(data['x'])
                 y = int(data['y'])
+                # Clamp coordinates to valid range
+                x = max(0, min(x, 65535))
+                y = max(0, min(y, 65535))
                 button = data.get('button', 0)  # Button index from 0
                 button_mask = 1 << button  # Convert to button mask
                 self._buttons |= button_mask  # Add button to mask
@@ -156,6 +162,9 @@ class VMDisplay:
             elif event_type == "mouseup":
                 x = int(data['x'])
                 y = int(data['y'])
+                # Clamp coordinates to valid range
+                x = max(0, min(x, 65535))
+                y = max(0, min(y, 65535))
                 button = data.get('button', 0)  # Button index from 0
                 button_mask = 1 << button  # Convert to button mask
                 self._buttons &= ~button_mask  # Remove button from mask
