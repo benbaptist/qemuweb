@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VM Display - {{ vm_id }}</title>
+    <!-- Link to Tailwind CSS (assuming it's used project-wide) -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- Link to custom vm-display.css -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/vm-display.css') }}">
+    <!-- Link to Font Awesome (if used by vm-display component) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars on the body */
+            background-color: #000; /* Match display background */
+        }
+        #app {
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        {% raw %}
+        <vm-display :vm-id="vmId" @error="handleDisplayError" @close="handleClose"></vm-display>
+        {% endraw %}
+    </div>
+
+    <!-- Vue.js -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <!-- Socket.IO client -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    
+    <!-- VMDisplay Vue Component -->
+    <script src="{{ url_for('static', filename='js/components/VMDisplay.js') }}"></script>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                vmId: '{{ vm_id }}', // Passed from Flask template
+                errorMessage: null
+            },
+            methods: {
+                handleDisplayError(error) {
+                    console.error('Display Error:', error);
+                    this.errorMessage = error.message || 'An unknown display error occurred.';
+                    // Optionally, redirect or show a user-friendly error message
+                    // For now, we'll just log it and could show it on the page if we add an element for it.
+                },
+                handleClose() {
+                    // When the display component emits 'close', we can decide what to do.
+                    // For a dedicated page, this might mean navigating away or showing a message.
+                    // For now, let's try to go back or close the window.
+                    console.log('Close button clicked on VM display page.');
+                    // Attempt to go back in history, if not possible, close the window.
+                    if (window.history.length > 1) {
+                        window.history.back();
+                    } else {
+                        // This might be blocked by the browser, but it's a common request.
+                        // window.close(); 
+                        // As a fallback, or primary action, redirect to the main page.
+                        window.location.href = "{{ url_for('main.index') }}";
+                    }
+                }
+            },
+            mounted() {
+                console.log('VM Display page loaded for VM ID:', this.vmId);
+            }
+        });
+    </script>
+</body>
+</html> 

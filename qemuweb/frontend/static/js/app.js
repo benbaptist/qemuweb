@@ -13,7 +13,6 @@ const app = new Vue({
         selectedVM: null,
         vmStates: {},
         displayConnections: {},
-        showingDisplay: false,
         vmLogs: [],
         logRefreshInterval: null,
         currentView: 'vms',
@@ -35,13 +34,13 @@ const app = new Vue({
         }
     },
     watch: {
-        showingDisplay(newValue, oldValue) {
-            console.log(`[App.js] showingDisplay changed from ${oldValue} to ${newValue}`);
-            if (newValue === true) {
-                console.log('[App.js] current selectedVM:', this.selectedVM);
-                console.log('[App.js] current vmStates[this.selectedVM]:', this.vmStates[this.selectedVM]);
-            }
-        }
+        // showingDisplay(newValue, oldValue) {
+        //     console.log(`[App.js] showingDisplay changed from ${oldValue} to ${newValue}`);
+        //     if (newValue === true) {
+        //         console.log('[App.js] current selectedVM:', this.selectedVM);
+        //         console.log('[App.js] current vmStates[this.selectedVM]:', this.vmStates[this.selectedVM]);
+        //     }
+        // }
     },
     methods: {
         handleResize() {
@@ -313,7 +312,6 @@ const app = new Vue({
 
         handleDisplayError(error) {
             this.showError(error.message);
-            this.showingDisplay = false;
         },
 
         showError(message) {

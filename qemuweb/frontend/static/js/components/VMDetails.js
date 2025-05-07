@@ -48,7 +48,7 @@ Vue.component('vm-details', {
         },
         openFullScreen() {
             console.log('[VMDetails] openFullScreen called for vm:', this.vm.name);
-            this.$emit('open-fullscreen', this.vm.name);
+            window.location.href = `/vm/${this.vm.name}/display`;
         },
         handleExpandVM(vmId) {
             console.log('[VMDetails] handleExpandVM received vmId:', vmId, 'Current VM name:', this.vm.name);

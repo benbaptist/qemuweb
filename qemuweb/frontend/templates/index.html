@@ -107,33 +107,14 @@
                                 </button>
                             </div>
                             <!-- VM Details -->
-                            <div v-if="!showingDisplay" class="bg-white shadow rounded-lg overflow-hidden">
+                            <div class="bg-white shadow rounded-lg overflow-hidden">
                                 <vm-details
                                     :vm="getSelectedVMConfig()"
                                     :vm-state="vmStates[selectedVM]"
                                     :qemu-capabilities="qemuCapabilities"
                                     @update="updateVM"
-                                    @open-fullscreen="showingDisplay = true"
                                     @error="errorMessage = $event">
                                 </vm-details>
-                            </div>
-
-                            <!-- VM Display -->
-                            <div v-if="showingDisplay" class="fixed inset-0 z-[100] bg-black">
-                                <vm-display
-                                    v-if="vmStates[selectedVM] === 'running'"
-                                    :vm-id="selectedVM"
-                                    @close="showingDisplay = false"
-                                    @error="handleDisplayError">
-                                </vm-display>
-                                <div v-else class="h-full flex items-center justify-center text-gray-500">
-                                    <p v-if="vmStates[selectedVM] === 'stopped'">
-                                        VM is stopped. Start it to view the display.
-                                    </p>
-                                    <p v-else>
-                                        Loading VM state...
-                                    </p>
-                                </div>
                             </div>
 
                             <!-- VM Logs -->
