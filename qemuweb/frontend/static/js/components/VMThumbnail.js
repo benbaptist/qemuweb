@@ -192,16 +192,23 @@ Vue.component('vm-thumbnail', {
             }
             this.connected = false;
             this.ctx = null;  // Clear context reference
+        },
+        expandVM() {
+            this.$emit('expand-vm', this.vmId);
         }
     },
     template: `
-        <div class="vm-thumbnail">
+        <div class="vm-thumbnail relative">
             <div v-if="vmState === 'running'">
                 <div v-if="loading" class="spinner-loader"></div>
                 <canvas ref="canvas" class="rounded-lg shadow-md" v-show="!loading"></canvas>
                 <div class="absolute top-2 right-2">
                     <div :class="['status-dot', connected ? 'connected' : 'disconnected']"></div>
                 </div>
+                <button @click.stop="expandVM" \
+                        class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white opacity-0 hover:opacity-100 transition-opacity duration-200 rounded-lg">
+                    <i class="fas fa-expand fa-2x"></i>
+                </button>
             </div>
             <div v-else class="placeholder rounded-lg shadow-md flex items-center justify-center">
                 <span class="text-gray-500">{{ vmState === 'stopped' ? 'VM is stopped' : 'Loading...' }}</span>

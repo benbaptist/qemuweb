@@ -48,16 +48,22 @@ Vue.component('vm-details', {
         },
         openFullScreen() {
             this.$emit('open-fullscreen', this.vm.name);
+        },
+        handleExpandVM(vmId) {
+            if (this.vm.name === vmId) {
+                this.openFullScreen();
+            }
         }
     },
     template: `
         <div class="space-y-6 pb-6">
             
             <!-- VM Thumbnail -->
-            <div v-if="!vm.headless && vmState === 'running'" class="-mb-6" @click="openFullScreen">
+            <div v-if="!vm.headless && vmState === 'running'" class="-mb-6">
                 <vm-thumbnail
                     :vm-id="vm.name"
-                    :vm-state="vmState">
+                    :vm-state="vmState"
+                    @expand-vm="handleExpandVM">
                 </vm-thumbnail>
             </div>
 
