@@ -99,7 +99,7 @@ Vue.component('vm-display', {
 
             // Display & Interaction State
             scale: 1.0,
-            minScale: 0.1, // Will be updated by fitToWindow
+            minScale: 0.1, // True minimum zoom level (e.g., 10%)
             maxScale: 5.0,
             panX: 0,
             panY: 0,
@@ -307,8 +307,8 @@ Vue.component('vm-display', {
             const newScaleY = availableHeight / this.vmCanvasHeight;
             const newFitScale = Math.min(newScaleX, newScaleY);
 
-            this.minScale = newFitScale > 0.01 ? newFitScale : 0.01; 
-            this.scale = this.minScale;
+            // Ensure scale is not less than the defined minScale, but don't update minScale itself here.
+            this.scale = Math.max(this.minScale, newFitScale);
             
             this.panX = (availableWidth - (this.vmCanvasWidth * this.scale)) / 2;
             this.panY = (availableHeight - (this.vmCanvasHeight * this.scale)) / 2;
