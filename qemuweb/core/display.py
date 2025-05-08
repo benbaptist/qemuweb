@@ -97,7 +97,7 @@ class VMDisplay:
                     img_buffer.seek(0)
                     
                     # Convert to PIL Image for dimensions and processing
-                    img = Image.open(img_buffer, formats=['PPM'])
+                    img = Image.open(img_buffer)
                     width, height = img.size
                     
                     # Convert to base64 with high quality
