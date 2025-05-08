@@ -396,7 +396,29 @@ Vue.component('vm-display', {
 
         // --- Input Event Handlers (Container Level for Pan/Zoom, Canvas for VM) ---
         handleWheel(e) {
-            if (!this.$refs.container || (this.isMobile && this.mobileToolbarOpen)) return;
+            if (!this.$refs.container) return; // Guard for container existence
+
+            if (this.isDesktop) {
+                // On desktop, forward scroll events to the VM instead of zooming
+                if (this.connected) {
+                    this.socket.emit('vm_input', {
+                        type: 'scroll', // Standardized event type for scrolling
+                        deltaX: e.deltaX,
+                        deltaY: e.deltaY,
+                        deltaZ: e.deltaZ, // deltaZ is available on WheelEvent
+                        deltaMode: e.deltaMode // 0 for pixel, 1 for line, 2 for page
+                    });
+                }
+                // e.preventDefault() is implicitly handled by @wheel.prevent in the template,
+                // so the browser's default scroll action is prevented.
+                return; // Explicitly return to avoid executing zoom logic below
+            }
+
+            // Original logic for non-desktop (e.g., mobile, or if wheel on mobile should zoom)
+            // If mobile toolbar is open, do nothing (as per original logic)
+            if (this.isMobile && this.mobileToolbarOpen) return;
+
+            // Proceed with zooming for non-desktop cases
             const scaleAmount = 1.1;
             let newScale = this.scale * (e.deltaY < 0 ? scaleAmount : 1 / scaleAmount);
             this.setScale(newScale, e.clientX, e.clientY);
