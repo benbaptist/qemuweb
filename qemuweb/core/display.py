@@ -4,12 +4,14 @@ from typing import Optional, Tuple, Dict, Any
 import numpy as np
 from vncdotool import api as vnc_api
 import socketio
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import io
 import base64
 import eventlet
 import socket
 import atexit
+import tempfile
+import PIL
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +49,6 @@ KEY_EVENT_MAP = {
     # For characters like 'a', 'A', '$', these are typically passed as is.
 }
 
-class NamedBytesIO(io.BytesIO):
-    def __init__(self, *args, **kwargs):
-        self.name = 'screenshot.png'
-        super().__init__(*args, **kwargs)
-
 class VMDisplay:
     def __init__(self, host: str = "localhost", port: int = 5900):
         self.host = host
@@ -86,45 +83,107 @@ class VMDisplay:
             self._running = True
             logger.info(f"Starting frame streaming for room {room}")
             frames_sent = 0
+            consecutive_errors = 0
+            last_resolution = None
             
             while self._running and self.connected:
                 try:
-                    # Create an in-memory buffer for the screen capture with a .png extension
-                    img_buffer = NamedBytesIO()
+                    # Create a temporary file instead of using a BytesIO
+                    # vncdotool's captureScreen expects a file-like object but works better with actual files
+                    with tempfile.NamedTemporaryFile(suffix='.png') as temp_file:
+                        # Call captureScreen and wait for it to complete
+                        # This returns the client instance when done
+                        self.client.captureScreen(temp_file.name)
+                        
+                        # Rewind the file for reading
+                        temp_file.flush()
+                        temp_file.seek(0)
+                        
+                        # Now we can safely open the image with PIL
+                        img = Image.open(temp_file.name)
+                        width, height = img.size
+                        
+                        # Check if resolution changed
+                        current_resolution = (width, height)
+                        if last_resolution != current_resolution:
+                            if last_resolution:
+                                logger.info(f"Resolution changed from {last_resolution} to {current_resolution}")
+                            last_resolution = current_resolution
+                            self._last_frame = None  # Force full frame update on resolution change
+                        
+                        # Convert to base64
+                        output = io.BytesIO()
+                        img.save(output, format='PNG', optimize=False, quality=100)
+                        img_b64 = base64.b64encode(output.getvalue()).decode('utf-8')
+                        
+                        # Only emit if the frame has changed
+                        if img_b64 != self._last_frame:
+                            try:
+                                sio.emit('vm_frame', {
+                                    'frame': img_b64,
+                                    'width': width,
+                                    'height': height,
+                                    'encoding': 'base64'
+                                }, room=room)
+                                self._last_frame = img_b64
+                                frames_sent += 1
+                                logger.debug(f"Sent frame {frames_sent} with dimensions {width}x{height}")
+                                consecutive_errors = 0  # Reset error counter on success
+                            except Exception as e:
+                                logger.error(f"Failed to emit frame: {e}", exc_info=True)
+                                eventlet.sleep(self.frame_interval)
+                                continue
                     
-                    # Capture the screen directly to the buffer
-                    self.client.captureScreen(img_buffer)
-                    img_buffer.seek(0)
-                    
-                    # Convert to PIL Image for dimensions and processing
-                    img = Image.open(img_buffer)
-                    width, height = img.size
-                    
-                    # Convert to base64 with high quality
-                    output = io.BytesIO()
-                    img.save(output, format='PNG', optimize=False, quality=100)
-                    img_b64 = base64.b64encode(output.getvalue()).decode('utf-8')
-                    
-                    # Only emit if the frame has changed
-                    if img_b64 != self._last_frame:
+                except (UnidentifiedImageError, IOError) as e:
+                    # Handle image-specific errors
+                    consecutive_errors += 1
+                    logger.error(f"Image error in streaming loop: {e}")
+                    # If we get too many consecutive errors, we might need to reconnect
+                    if consecutive_errors > 3:
                         try:
-                            sio.emit('vm_frame', {
-                                'frame': img_b64,
-                                'width': width,
-                                'height': height,
-                                'encoding': 'base64'
-                            }, room=room)
-                            self._last_frame = img_b64
-                            frames_sent += 1
-                            logger.debug(f"Sent frame {frames_sent} with dimensions {width}x{height}")
-                        except Exception as e:
-                            logger.error(f"Failed to emit frame: {e}", exc_info=True)
-                            eventlet.sleep(self.frame_interval)
-                            continue
+                            logger.warning("Multiple consecutive errors, attempting to refresh VNC connection")
+                            # Try to refresh the connection without full disconnect
+                            if self.client:
+                                try:
+                                    # Force a frame refresh
+                                    self.client.refreshScreen(incremental=False)
+                                    # Reset counters after recovery attempt
+                                    consecutive_errors = 0
+                                    self._last_frame = None  # Force next frame to be sent
+                                except Exception as refresh_error:
+                                    logger.error(f"Failed to refresh screen: {refresh_error}")
+                        except Exception as reconnect_error:
+                            logger.error(f"Failed to recover connection: {reconnect_error}")
+                    
+                    eventlet.sleep(self.frame_interval * 2)  # Slightly longer delay on error
+                    continue
                         
                 except Exception as e:
+                    consecutive_errors += 1
                     logger.error(f"Error in streaming loop: {e}", exc_info=True)
-                    eventlet.sleep(self.frame_interval)
+                    
+                    # If there are too many consecutive errors, we might need to reconnect
+                    if consecutive_errors > 5:
+                        logger.warning("Too many consecutive errors, reconnecting to VNC server")
+                        try:
+                            # Attempt to disconnect and reconnect
+                            if self.client:
+                                try:
+                                    self.client.disconnect()
+                                except:
+                                    pass
+                                
+                            # Reconnect using the same server
+                            server = f"{self.host}::{self.port}"
+                            self.client = vnc_api.connect(server, password=None)
+                            self.client.timeout = 5
+                            logger.info("VNC client reconnected after errors")
+                            consecutive_errors = 0
+                            self._last_frame = None  # Force next frame to be sent
+                        except Exception as reconnect_error:
+                            logger.error(f"Failed to reconnect: {reconnect_error}")
+                    
+                    eventlet.sleep(self.frame_interval * 2)  # Slightly longer delay on error
                     continue
                     
                 eventlet.sleep(self.frame_interval)
