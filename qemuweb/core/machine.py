@@ -312,6 +312,10 @@ class VMManager:
         except Exception as e:
             logging.error(f"Error saving VM configs: {e}")
 
+    def get_vm(self, name: str) -> Optional[VMConfig]:
+        """Get a VM configuration by name."""
+        return self.vms.get(name)
+
     def get_all_vms(self) -> List[Dict]:
         """Get all VM configurations with their current status."""
         return [self.get_vm_status(name) for name in self.vms.keys() if self.get_vm_status(name) is not None]
