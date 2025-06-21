@@ -160,6 +160,9 @@ class VMConfig:
     def create_from_dict(data: Dict, qemu_caps=None) -> 'VMConfig':
         """Create a VMConfig instance from a dictionary, with QEMU capabilities."""
         config_data = data.copy()
+
+        if 'qmp_socket' in config_data:
+            del config_data['qmp_socket']
         
         # Handle disks
         if 'disks' in config_data:
