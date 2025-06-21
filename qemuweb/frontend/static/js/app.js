@@ -56,9 +56,10 @@ const app = new Vue({
                     },
                     body: JSON.stringify(vmConfig)
                 });
-                
+                const data = await response.json();
+
                 if (!response.ok) {
-                    throw new Error(`Failed to create VM: ${response.statusText}`);
+                    throw new Error(data.error || `Failed to create VM: ${response.statusText}`);
                 }
 
                 this.showCreateModal = false;
@@ -78,9 +79,10 @@ const app = new Vue({
                 const response = await fetch(`/api/vms/${vmName}`, {
                     method: 'DELETE'
                 });
+                const data = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(`Failed to delete VM: ${response.statusText}`);
+                    throw new Error(data.error || `Failed to delete VM: ${response.statusText}`);
                 }
 
                 this.successMessage = 'VM deleted successfully';
@@ -96,9 +98,10 @@ const app = new Vue({
                 const response = await fetch(`/api/vms/${vmName}/start`, {
                     method: 'POST'
                 });
+                const data = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(`Failed to start VM: ${response.statusText}`);
+                    throw new Error(data.error || `Failed to start VM: ${response.statusText}`);
                 }
 
                 this.successMessage = 'VM started successfully';
@@ -114,9 +117,10 @@ const app = new Vue({
                 const response = await fetch(`/api/vms/${vmName}/stop`, {
                     method: 'POST'
                 });
+                const data = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(`Failed to stop VM: ${response.statusText}`);
+                    throw new Error(data.error || `Failed to stop VM: ${response.statusText}`);
                 }
 
                 this.successMessage = 'VM stopped successfully';
