@@ -184,6 +184,15 @@ class VMConfig:
         else:
             config_data['gpu'] = GPUConfig()
 
+        # Override default machine type for ARM architectures if not specified
+        if config_data['arch'] in ["aarch64", "arm"]:
+            if config_data['machine'] == 'q35':
+                config_data['machine'] = 'virt'
+            
+            # Enable virtio-gpu for ARM by default if no GPU is explicitly configured
+            if not config_data['gpu'].enabled:
+                config_data['gpu'] = GPUConfig(enabled=True, type='virtio')
+
         # Get current config for defaults
         current_config = config_manager.config
 
@@ -206,7 +215,7 @@ class VMConfig:
         for key, default in defaults.items():
             if key not in config_data:
                 config_data[key] = default
-
+        
         return VMConfig(**config_data)
 
 class VMManager:
@@ -566,14 +575,27 @@ class VMManager:
         if vm.headless:
             cmd.append("-nographic")
         else:
+            # Add GPU device.
+            if vm.gpu and vm.gpu.enabled:
+                if vm.gpu.type == 'virtio':
+                    cmd.extend(["-device", "virtio-gpu-pci"])
+                elif vm.gpu.type in ['vga', 'qxl', 'std', 'cirrus', 'vmware']:
+                    cmd.extend(["-vga", vm.gpu.type])
+            elif vm.arch in ["aarch64", "arm"]:
+                # Fallback for arm if GPU not specified in config
+                cmd.extend(["-device", "virtio-gpu-pci"])
+            else:
+                # Fallback for x86
+                cmd.extend(["-vga", "std"])
+
             # Add USB controller
             cmd.extend(["-device", "qemu-xhci,id=xhci"])  # USB 3.0 controller with ID
             
             # Check if relative mouse mode is enabled
             if vm.display.relative_mouse:
-                cmd.extend(["-usbdevice", "tablet"])  # Connect tablet for relative mouse movement
+                cmd.extend(["-device", "usb-tablet,bus=xhci.0"])  # Connect tablet for relative mouse movement
             else:
-                cmd.extend(["-usbdevice", "mouse"])  # Connect standard mouse
+                cmd.extend(["-device", "usb-mouse,bus=xhci.0"])  # Connect standard mouse
             
             # Handle display configuration
             if vm.display.type == "vnc":
@@ -606,9 +628,6 @@ class VMManager:
                 if vm.display.password:
                     spice_options.append(f"password={vm.display.password}")
                 cmd.extend(["-spice", ",".join(spice_options)])
-            else:
-                # Default to standard VGA if no display type is specified
-                cmd.extend(["-vga", "std"])
         
         # Disks
         for disk in vm.disks:
