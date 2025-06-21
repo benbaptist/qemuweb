@@ -2,6 +2,14 @@ Vue.component('create-vm-modal', {
     props: ['show', 'qemuCapabilities', 'vmData'],
     data() {
         return {
+            saneDefaults: {
+                'aarch64': { machine: 'virt', cpu: 'max', fallback_cpu: 'cortex-a72' },
+                'arm': { machine: 'virt', cpu: 'cortex-a15' },
+                'i386': { machine: 'q35', cpu: 'qemu32' },
+                'x86_64': { machine: 'q35', cpu: 'host', fallback_cpu: 'max' },
+                'riscv64': { machine: 'virt', cpu: 'sifive-u54' },
+                'ppc64': { machine: 'pseries', cpu: 'POWER9' },
+            },
             newVM: {
                 name: this.vmData?.name || '',
                 arch: this.vmData?.arch || '',
@@ -30,6 +38,39 @@ Vue.component('create-vm-modal', {
         }
     },
     watch: {
+        'newVM.arch': function(newArch, oldArch) {
+            if (newArch === oldArch || !this.qemuCapabilities) return;
+
+            const defaults = this.saneDefaults[newArch];
+            if (defaults) {
+                const machineTypes = this.getMachineTypes(newArch);
+                if (machineTypes.includes(defaults.machine)) {
+                    this.newVM.machine = defaults.machine;
+                } else if (machineTypes.length > 0) {
+                    this.newVM.machine = machineTypes[0];
+                }
+
+                const cpuModels = this.getCPUModels(newArch);
+                if (defaults.cpu === 'host' && cpuModels.includes('host')) {
+                    this.newVM.cpu = 'host';
+                } else if (defaults.cpu === 'host' && defaults.fallback_cpu && cpuModels.includes(defaults.fallback_cpu)) {
+                    this.newVM.cpu = defaults.fallback_cpu;
+                } else if (cpuModels.includes(defaults.cpu)) {
+                    this.newVM.cpu = defaults.cpu;
+                } else if (cpuModels.length > 0) {
+                    this.newVM.cpu = cpuModels[0];
+                }
+            } else {
+                const machineTypes = this.getMachineTypes(newArch);
+                if (machineTypes.length > 0) {
+                    this.newVM.machine = machineTypes[0];
+                }
+                const cpuModels = this.getCPUModels(newArch);
+                if (cpuModels.length > 0) {
+                    this.newVM.cpu = cpuModels[0];
+                }
+            }
+        },
         qemuCapabilities: {
             immediate: true,
             handler(newCaps) {
