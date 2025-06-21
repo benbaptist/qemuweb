@@ -356,75 +356,97 @@ class VMManager:
             return False
 
     def remove_vm(self, name: str) -> bool:
-        """Remove a VM configuration."""
+        """Delete a VM's configuration file."""
         if name in self.vms:
-            if name in self.processes:
+            # Stop the VM if it's running
+            if name in self.processes and self.processes[name].poll() is None:
                 self.stop_vm(name)
+            
+            # Remove the config from the dict
             del self.vms[name]
+            
+            # Save the updated configs
             self.save_vm_configs()
-            logging.info(f"Removed VM: {name}")
+            
+            # Remove the config file from storage
+            config_manager.remove_vm_config(name)
+            
             return True
         return False
 
     def start_vm(self, name: str) -> Tuple[bool, Optional[str]]:
-        """Start a VM."""
-        if name not in self.vms:
-            return False, "VM not found"
-        
+        """Start a VM and return a success flag and an optional error message."""
         if name in self.processes and self.processes[name].poll() is None:
-            return False, "VM is already running"
-        
+            logging.info(f"VM {name} is already running.")
+            return True, None  # Already running
+
+        vm = self.get_vm(name)
+        if not vm:
+            return False, "VM not found"
+
+        # Dynamically assign a VNC port if not set
+        if vm.display.type == "vnc" and not vm.display.port:
+            success, port = self._find_free_port(5900, 6000)
+            if not success:
+                return False, "No free VNC port found"
+            vm.display.port = port
+            
+        elif vm.display.type == "spice" and not vm.display.port:
+            success, port = self._find_free_port(5900, 6000)
+            if not success:
+                return False, "No free SPICE port found"
+            vm.display.port = port
+
         try:
-            vm = self.vms[name]
-            cmd = self._build_qemu_command(vm)
-            logging.info(f"Starting VM {name} with command: {' '.join(cmd)}")
+            command = self._build_qemu_command(vm)
             
-            # Set up logging for the VM
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            log_path = config_manager.get_log_path(name, timestamp)
-            log_file = open(log_path, 'w')
-            logging.info(f"VM {name} logs will be written to {log_path}")
+            # Get the log file path
+            log_dir = config_manager.logs_dir
+            log_dir.mkdir(exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file_path = log_dir / f"{name.replace(' ', '_')}_{timestamp}.log"
+
+            # Open the log file
+            log_file = open(log_file_path, 'w')
+
+            logging.info(f"Starting VM {name} with command: {' '.join(command)}")
+            logging.info(f"VM {name} logs will be written to {log_file_path}")
+
+            process = subprocess.Popen(command, stdout=log_file, stderr=log_file)
             
-            # Start the process
-            process = subprocess.Popen(
-                cmd,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                # Don't use preexec_fn on macOS
-                start_new_session=True if os.name != 'nt' else False
-            )
-            
-            # Wait a short time to check if process started successfully
+            # Give QEMU a moment to start up or fail
             time.sleep(1)
-            if process.poll() is not None:
-                error_msg = "Process failed to start"
-                try:
-                    with open(log_path, 'r') as f:
-                        error_msg = f.read().strip()
-                except:
-                    pass
-                log_file.close()
-                return False, error_msg
             
+            # Check if the process exited quickly, which might indicate an error
+            if process.poll() is not None:
+                # Read the log to get the error
+                log_file.close()
+                with open(log_file_path, 'r') as f:
+                    error_output = f.read().strip()
+                
+                # If there's no output, provide a generic message.
+                if not error_output:
+                    error_output = "QEMU process failed to start with no specific error message."
+
+                logging.error(f"Failed to start VM {name}: {error_output}")
+                return False, error_output
+
             self.processes[name] = process
+            self.stop_events[name] = threading.Event()
             self._start_monitor_thread(name)
             
-            # Wait for display to be ready if not headless
-            if not vm.headless and hasattr(vm.display, 'port'):
-                time.sleep(2)  # Give VNC/SPICE server time to start
-            
-            logging.info(f"Started VM: {name}")
+            if self.status_callback:
+                self.status_callback(self.get_vm_status(name))
+                
             return True, None
-            
+        
         except Exception as e:
-            error_msg = f"Failed to start VM: {str(e)}"
-            logging.error(error_msg)
-            return False, error_msg
+            logging.error(f"Failed to start VM {name}: {str(e)}")
+            return False, str(e)
 
     def stop_vm(self, name: str) -> bool:
-        """Stop a VM."""
-        if name not in self.processes:
+        """Stop a VM process."""
+        if name not in self.processes or self.processes[name].poll() is not None:
             return False
         
         try:
