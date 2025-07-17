@@ -7,6 +7,8 @@ from typing import Optional, Tuple, List, Any
 from PIL import Image
 import io
 import eventlet
+import numpy as np
+import cv2
 
 logger = logging.getLogger(__name__)
 
@@ -243,9 +245,12 @@ class EventletVNCClient:
         return data
     
     def _read_framebuffer_update(self) -> Optional[Image.Image]:
-        """Read and process a framebuffer update message"""
+        """Read a framebuffer update message with optimized processing"""
+        if not self.socket:
+            return None
+            
         try:
-            # Set a reasonable timeout for frame reading
+            # Store original timeout
             original_timeout = self.socket.gettimeout()
             self.socket.settimeout(5.0)  # 5 second timeout for frame reads
             
@@ -266,8 +271,8 @@ class EventletVNCClient:
                 # Restore original timeout
                 self.socket.settimeout(original_timeout)
             
-            # Initialize image with black background
-            image_data = bytearray(self.width * self.height * 3)  # RGB
+            # Create numpy array for fast pixel manipulation
+            image_array = np.zeros((self.height, self.width, 3), dtype=np.uint8)
             
             # Process rectangles
             for rect_idx in range(num_rects):
@@ -281,8 +286,7 @@ class EventletVNCClient:
                 logger.debug(f"Rectangle {rect_idx}: ({x},{y}) {w}x{h} encoding={encoding}")
                 
                 if encoding == self.RAW_ENCODING:
-                    # For RAW encoding, each pixel is typically 4 bytes (BGRA) or depends on server pixel format
-                    # For simplicity, assume 4 bytes per pixel (32-bit)
+                    # For RAW encoding, each pixel is typically 4 bytes (BGRA)
                     bytes_per_pixel = 4
                     data_size = w * h * bytes_per_pixel
                     
@@ -291,28 +295,31 @@ class EventletVNCClient:
                         logger.error(f"Failed to read {data_size} bytes for rectangle {rect_idx}")
                         return None
                     
-                    # Copy pixel data to image buffer
-                    for row in range(h):
-                        for col in range(w):
-                            if y + row >= self.height or x + col >= self.width:
-                                continue
-                                
-                            src_idx = (row * w + col) * bytes_per_pixel
-                            dst_idx = ((y + row) * self.width + (x + col)) * 3  # RGB
-                            
-                            if src_idx + 3 < len(pixel_data) and dst_idx + 2 < len(image_data):
-                                # Convert BGRA to RGB (assuming little-endian BGRA format)
-                                image_data[dst_idx] = pixel_data[src_idx + 2]      # R
-                                image_data[dst_idx + 1] = pixel_data[src_idx + 1]  # G
-                                image_data[dst_idx + 2] = pixel_data[src_idx]      # B
+                    # Bounds checking
+                    if y + h > self.height or x + w > self.width:
+                        logger.warning(f"Rectangle bounds exceed image size: ({x},{y}) {w}x{h}")
+                        continue
+                    
+                    # Convert bytes to numpy array for vectorized processing
+                    pixel_array = np.frombuffer(pixel_data, dtype=np.uint8)
+                    pixel_array = pixel_array.reshape((h, w, bytes_per_pixel))
+                    
+                    # Vectorized BGRA to RGB conversion (much faster than loops!)
+                    # Extract BGR channels and ignore alpha
+                    bgr_data = pixel_array[:, :, :3]  # Take only BGR, skip alpha
+                    rgb_data = bgr_data[:, :, ::-1]   # Reverse to get RGB
+                    
+                    # Copy to the correct region of the image
+                    image_array[y:y+h, x:x+w] = rgb_data
+                    
                 else:
                     logger.warning(f"Unsupported encoding: {encoding}")
                     # Skip this rectangle data - we need to read and discard it
                     # For now, just return None to avoid getting stuck
                     return None
             
-            # Create PIL Image from buffer
-            return Image.frombytes('RGB', (self.width, self.height), bytes(image_data))
+            # Convert numpy array back to PIL Image
+            return Image.fromarray(image_array)
             
         except Exception as e:
             logger.error(f"Failed to read framebuffer update: {e}", exc_info=True)

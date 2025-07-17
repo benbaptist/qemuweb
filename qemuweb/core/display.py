@@ -12,6 +12,8 @@ import atexit
 import tempfile
 import PIL
 import time
+import hashlib
+import cv2
 
 from .vnc_client import EventletVNCClient, VNCError
 
@@ -51,7 +53,7 @@ class VMDisplay:
         self.port = port
         self.client = None
         self.connected = False
-        self.frame_interval = 1/15  # 15 FPS target (more reasonable)
+        self.frame_interval = 1/30  # 30 FPS target (optimized performance)
         self._last_frame = None
         self._running = False
         self._buttons = 0  # Track button state locally
@@ -120,38 +122,58 @@ class VMDisplay:
                         last_resolution = current_resolution
                         self._last_frame = None  # Force full frame update on resolution change
                     
-                    # Convert to base64
-                    output = io.BytesIO()
-                    img.save(output, format='PNG', optimize=True, compress_level=1)
-                    img_b64 = base64.b64encode(output.getvalue()).decode('utf-8')
+                    # Convert to base64 - Use JPEG for much better performance
+                    img_array = np.array(img)
                     
-                    # Adaptive frame rate based on content changes
-                    current_time = time.time()
-                    frame_changed = (img_b64 != self._last_frame)
+                    # Fast frame comparison using hash before expensive encoding
+                    frame_hash = hashlib.md5(img_array.tobytes()).hexdigest()
                     
-                    if frame_changed:
-                        self._consecutive_identical_frames = 0
-                        try:
-                            sio.emit('vm_frame', {
-                                'frame': img_b64,
-                                'width': width,
-                                'height': height,
-                                'encoding': 'base64'
-                            }, room=room)
-                            self._last_frame = img_b64
-                            frames_sent += 1
-                            logger.debug(f"Sent frame {frames_sent} with dimensions {width}x{height}")
-                            consecutive_errors = 0  # Reset error counter on success
-                        except Exception as e:
-                            logger.error(f"Failed to emit frame: {e}", exc_info=True)
-                            eventlet.sleep(self.frame_interval)
-                            continue
-                    else:
+                    # Skip encoding if frame hasn't changed (major CPU savings!)
+                    if frame_hash == getattr(self, '_last_frame_hash', None):
                         self._consecutive_identical_frames += 1
-                        
-                    # Update frame timing
-                    self._last_frame_time = current_time
+                        # Don't send duplicate frames, just update counters
+                        consecutive_errors = 0  # Reset error counter on successful capture
+                        eventlet.sleep(self.frame_interval * min(4, 1 + (self._consecutive_identical_frames / 10)))
+                        continue
                     
+                    # Frame has changed, proceed with encoding
+                    self._consecutive_identical_frames = 0
+                    self._last_frame_hash = frame_hash
+                    
+                    # Use OpenCV for fast JPEG encoding (much faster than PIL)
+                    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 85]  # Good quality/speed balance
+                    success, img_encoded = cv2.imencode('.jpg', cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR), encode_param)
+                    
+                    if not success:
+                        logger.warning("Failed to encode image with OpenCV, falling back to PIL")
+                        # Fallback to PIL JPEG if OpenCV fails
+                        output = io.BytesIO()
+                        img.save(output, format='JPEG', quality=85, optimize=True)
+                        img_b64 = base64.b64encode(output.getvalue()).decode('utf-8')
+                    else:
+                        # OpenCV encoded successfully - much faster!
+                        img_b64 = base64.b64encode(img_encoded.tobytes()).decode('utf-8')
+                    
+                    # Send the frame since it has changed
+                    current_time = time.time()
+                    
+                    try:
+                        sio.emit('vm_frame', {
+                            'frame': img_b64,
+                            'width': width,
+                            'height': height,
+                            'encoding': 'base64',
+                            'format': 'jpeg'  # Indicate JPEG format to client
+                        }, room=room)
+                        self._last_frame = img_b64
+                        frames_sent += 1
+                        logger.debug(f"Sent frame {frames_sent} with dimensions {width}x{height}")
+                        consecutive_errors = 0  # Reset error counter on success
+                    except Exception as e:
+                        logger.error(f"Failed to emit frame: {e}", exc_info=True)
+                        eventlet.sleep(self.frame_interval)
+                        continue
+                        
                 except (UnidentifiedImageError, IOError, VNCError) as e:
                     # Handle image-specific errors
                     consecutive_errors += 1

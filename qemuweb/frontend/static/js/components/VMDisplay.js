@@ -248,7 +248,9 @@ Vue.component('vm-display', {
                 await new Promise((resolve, reject) => {
                     img.onload = resolve;
                     img.onerror = reject;
-                    img.src = `data:image/png;base64,${data.frame}`;
+                    // Support both JPEG (optimized) and PNG formats
+            const format = data.format || 'png';  // Default to PNG for backwards compatibility
+            img.src = `data:image/${format};base64,${data.frame}`;
                 });
 
                 let dimensionsChanged = false;
