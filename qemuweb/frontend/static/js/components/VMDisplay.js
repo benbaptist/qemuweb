@@ -134,6 +134,7 @@ Vue.component('vm-display', {
             isPanningWithMouse: false, // Specifically for mouse dragging
             lastMousePanPosition: { x: 0, y: 0 },
             isInFitToWindowMode: false, // Track if user is in fit-to-window mode
+            lastViewportSize: { width: 0, height: 0 }, // Track viewport size for resize detection
 
             // Toolbar State
             isDesktop: !(/Mobi|Android/i.test(navigator.userAgent)),
@@ -206,24 +207,27 @@ Vue.component('vm-display', {
         }
     },
 
-    mounted() {
-        this.setupSocket();
-        this.setupGlobalEventListeners();
-        this.setupResizeObserver();
-        
-        this.$nextTick(() => {
-            if (this.containerObserverTarget) {
-                this.resizeObserver.observe(this.containerObserverTarget);
-            }
-            // Initial fit will happen on first frame or if vmCanvas dimensions already known
-            if(this.vmCanvasWidth > 0 && this.vmCanvasHeight > 0){
-                this.fitToWindow(); // Enable fit-to-window mode by default
-            }
-            if (this.$refs.canvas) {
-                 this.$refs.canvas.focus();
-            }
-        });
-    },
+            mounted() {
+            this.setupSocket();
+            this.setupGlobalEventListeners();
+            this.setupResizeObserver();
+            
+            this.$nextTick(() => {
+                if (this.containerObserverTarget) {
+                    this.resizeObserver.observe(this.containerObserverTarget);
+                    // Initialize viewport size tracking
+                    const rect = this.containerObserverTarget.getBoundingClientRect();
+                    this.lastViewportSize = { width: rect.width, height: rect.height };
+                }
+                // Initial fit will happen on first frame or if vmCanvas dimensions already known
+                if(this.vmCanvasWidth > 0 && this.vmCanvasHeight > 0){
+                    this.fitToWindow(); // Enable fit-to-window mode by default
+                }
+                if (this.$refs.canvas) {
+                     this.$refs.canvas.focus();
+                }
+            });
+        },
 
     beforeDestroy() {
         this.cleanup();
@@ -478,6 +482,12 @@ Vue.component('vm-display', {
             document.addEventListener('keyup', this.handleGlobalKeyUp);
             window.addEventListener('blur', this.handleWindowBlur);
             document.addEventListener('click', this.handleClickOutsideScaleMenu, true); // Capture phase
+            
+            // Add orientation change listener for mobile
+            if (this.isMobile) {
+                window.addEventListener('orientationchange', this.handleOrientationChange);
+                window.addEventListener('resize', this.handleWindowResize);
+            }
         },
         cleanup() {
             if (this.socket) this.socket.disconnect();
@@ -491,18 +501,38 @@ Vue.component('vm-display', {
             document.removeEventListener('keyup', this.handleGlobalKeyUp);
             window.removeEventListener('blur', this.handleWindowBlur);
             document.removeEventListener('click', this.handleClickOutsideScaleMenu, true);
+            
+            if (this.isMobile) {
+                window.removeEventListener('orientationchange', this.handleOrientationChange);
+                window.removeEventListener('resize', this.handleWindowResize);
+            }
         },
         setupResizeObserver() {
-            this.resizeObserver = new ResizeObserver(() => {
-                this.$nextTick(() => {
-                    if (this.isInFitToWindowMode) {
-                        // Only auto-fit if user was in fit-to-window mode
-                        this.fitToWindow(true); // Pass true to indicate this is an auto-resize
-                    } else {
-                        // Just adjust bounds for manual zoom mode
-                        this.checkBoundsAndAdjustPan();
-                    }
-                });
+            this.resizeObserver = new ResizeObserver((entries) => {
+                const entry = entries[0];
+                if (!entry) return;
+                
+                const newWidth = entry.contentRect.width;
+                const newHeight = entry.contentRect.height;
+                const oldWidth = this.lastViewportSize.width;
+                const oldHeight = this.lastViewportSize.height;
+                
+                // Check if viewport actually changed
+                if (newWidth !== oldWidth || newHeight !== oldHeight) {
+                    console.log(`Viewport resized: ${oldWidth}x${oldHeight} → ${newWidth}x${newHeight}`);
+                    
+                    this.lastViewportSize = { width: newWidth, height: newHeight };
+                    
+                    this.$nextTick(() => {
+                        if (this.isInFitToWindowMode) {
+                            // Only auto-fit if user was in fit-to-window mode
+                            this.fitToWindow(true); // Pass true to indicate this is an auto-resize
+                        } else {
+                            // For manual zoom, maintain the same scale but adjust pan to keep content centered
+                            this.adjustPanForViewportChange(oldWidth, oldHeight, newWidth, newHeight);
+                        }
+                    });
+                }
             });
         },
         handleClickOutsideScaleMenu(event) {
@@ -939,22 +969,102 @@ Vue.component('vm-display', {
         // --- Fullscreen Handling ---
         handleFullscreenChange() {
             this.isFullscreen = !!document.fullscreenElement;
-            this.$nextTick(() => {
-                if (this.isInFitToWindowMode) {
-                    this.fitToWindow(true); // Auto-resize if in fit mode
-                } else {
-                    this.checkBoundsAndAdjustPan(); // Just adjust bounds for manual zoom
+            // Fullscreen change triggers a resize, so let the resize observer handle it
+        },
+        
+        // --- Mobile Orientation & Resize Handling ---
+        handleOrientationChange() {
+            // Orientation change triggers resize, but we need to wait for the resize to complete
+            setTimeout(() => {
+                const rect = this.$refs.container.getBoundingClientRect();
+                const newWidth = rect.width;
+                const newHeight = rect.height;
+                const oldWidth = this.lastViewportSize.width;
+                const oldHeight = this.lastViewportSize.height;
+                
+                if (newWidth !== oldWidth || newHeight !== oldHeight) {
+                    console.log(`Orientation changed: ${oldWidth}x${oldHeight} → ${newWidth}x${newHeight}`);
+                    this.lastViewportSize = { width: newWidth, height: newHeight };
+                    
+                    this.$nextTick(() => {
+                        if (this.isInFitToWindowMode) {
+                            this.fitToWindow(true);
+                        } else {
+                            this.adjustPanForViewportChange(oldWidth, oldHeight, newWidth, newHeight);
+                        }
+                    });
                 }
-            });
+            }, 100); // Wait for orientation change to complete
+        },
+        
+        handleWindowResize() {
+            // Handle window resize events (separate from ResizeObserver for mobile)
+            if (this.isMobile) {
+                setTimeout(() => {
+                    const rect = this.$refs.container.getBoundingClientRect();
+                    const newWidth = rect.width;
+                    const newHeight = rect.height;
+                    const oldWidth = this.lastViewportSize.width;
+                    const oldHeight = this.lastViewportSize.height;
+                    
+                    if (newWidth !== oldWidth || newHeight !== oldHeight) {
+                        console.log(`Window resized: ${oldWidth}x${oldHeight} → ${newWidth}x${newHeight}`);
+                        this.lastViewportSize = { width: newWidth, height: newHeight };
+                        
+                        this.$nextTick(() => {
+                            if (this.isInFitToWindowMode) {
+                                this.fitToWindow(true);
+                            } else {
+                                this.adjustPanForViewportChange(oldWidth, oldHeight, newWidth, newHeight);
+                            }
+                        });
+                    }
+                }, 50);
+            }
         },
 
         // --- Virtual Keyboard Handling ---
         triggerVirtualKeyboard() {
             if (this.isMobile && this.$refs.virtualKeyboardInput) {
+                // Store current viewport size before keyboard appears
+                const rect = this.$refs.container.getBoundingClientRect();
+                this.lastViewportSize = { width: rect.width, height: rect.height };
+                
                 // Focus the hidden input to trigger the virtual keyboard
                 this.$refs.virtualKeyboardInput.focus();
                 // Clear any previous text
                 this.$refs.virtualKeyboardInput.value = '';
+                
+                // Set up a timer to detect when keyboard appears and adjust viewport
+                setTimeout(() => {
+                    this.adjustViewportForKeyboard();
+                }, 300); // Give keyboard time to appear
+            }
+        },
+        
+        adjustViewportForKeyboard() {
+            if (!this.isMobile || !this.$refs.container) return;
+            
+            const rect = this.$refs.container.getBoundingClientRect();
+            const currentWidth = rect.width;
+            const currentHeight = rect.height;
+            const oldWidth = this.lastViewportSize.width;
+            const oldHeight = this.lastViewportSize.height;
+            
+            // Check if viewport changed (keyboard appeared)
+            if (currentHeight < oldHeight) {
+                console.log(`Keyboard appeared, adjusting viewport: ${oldWidth}x${oldHeight} → ${currentWidth}x${currentHeight}`);
+                
+                if (this.isInFitToWindowMode) {
+                    // Re-fit to the new smaller viewport
+                    this.fitToWindow(true);
+                } else {
+                    // Adjust pan to keep content centered in the smaller viewport
+                    this.adjustPanForViewportChange(oldWidth, oldHeight, currentWidth, currentHeight);
+                }
+                
+                // Update the last viewport size to the new size
+                this.lastViewportSize = { width: currentWidth, height: currentHeight };
             }
         },
         handleVirtualKeyboardInput(e) {
@@ -1057,10 +1167,54 @@ Vue.component('vm-display', {
                 this.socket.emit('vm_input', { type: 'keyup', key: e.key, code: e.code });
             }
         },
+        adjustPanForViewportChange(oldWidth, oldHeight, newWidth, newHeight) {
+            if (!this.$refs.container || !this.vmCanvasWidth || !this.vmCanvasHeight) return;
+            
+            // Calculate the center point of the visible content in the old viewport
+            const oldCenterX = oldWidth / 2;
+            const oldCenterY = oldHeight / 2;
+            
+            // Calculate where that center point is in VM coordinates
+            const vmCenterX = (oldCenterX - this.panX) / this.scale;
+            const vmCenterY = (oldCenterY - this.panY) / this.scale;
+            
+            // Calculate new pan to keep the same VM point centered in the new viewport
+            this.panX = (newWidth / 2) - (vmCenterX * this.scale);
+            this.panY = (newHeight / 2) - (vmCenterY * this.scale);
+            
+            // Ensure the new pan is within bounds
+            this.checkBoundsAndAdjustPan();
+        },
+        
         handleVirtualKeyboardBlur() {
             // Reset the previous length when keyboard is hidden
             if (this.$refs.virtualKeyboardInput) {
                 this.$refs.virtualKeyboardInput.dataset.prevLength = 0;
+            }
+            
+            // On mobile, when keyboard is hidden, adjust viewport back
+            if (this.isMobile) {
+                this.$nextTick(() => {
+                    const rect = this.$refs.container.getBoundingClientRect();
+                    const currentWidth = rect.width;
+                    const currentHeight = rect.height;
+                    
+                    if (currentWidth !== this.lastViewportSize.width || currentHeight !== this.lastViewportSize.height) {
+                        console.log(`Keyboard hidden, adjusting viewport back: ${currentWidth}x${currentHeight}`);
+                        this.lastViewportSize = { width: currentWidth, height: currentHeight };
+                        
+                        if (this.isInFitToWindowMode) {
+                            this.fitToWindow(true);
+                        } else {
+                            this.adjustPanForViewportChange(
+                                this.lastViewportSize.width, 
+                                this.lastViewportSize.height, 
+                                currentWidth, 
+                                currentHeight
+                            );
+                        }
+                    }
+                });
             }
         },
 
