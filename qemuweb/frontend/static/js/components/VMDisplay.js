@@ -1,18 +1,13 @@
 Vue.component('vm-display', {
     template: `
-        <div class="fixed inset-0 bg-black flex flex-col select-none" 
-             @mouseenter="isDesktop && (desktopToolbarHover = true)" 
-             @mouseleave="isDesktop && (desktopToolbarHover = false)">
+        <div class="fixed inset-0 bg-black flex flex-col select-none">
 
             <!-- Desktop Toolbar -->
             <div v-if="isDesktop" 
-                 class="absolute top-0 left-0 right-0 p-2 bg-gray-800 bg-opacity-75 z-50 flex justify-between items-center transition-opacity duration-300 text-white"
-                 :class="{ 'opacity-100': desktopToolbarHover || desktopToolbarPinned, 'opacity-25': !desktopToolbarHover && !desktopToolbarPinned }">
+                 class="flex-none w-full p-2 bg-gray-800 text-white z-50 flex justify-between items-center"
+                 :class="{ 'hidden': isFullscreen }">
                 <!-- Left Aligned Controls -->
                 <div class="flex items-center gap-2">
-                    <button @click="togglePinDesktopToolbar" class="p-2 rounded hover:bg-gray-700" :title="desktopToolbarPinned ? 'Unpin Toolbar' : 'Pin Toolbar'">
-                        <i class="fas" :class="desktopToolbarPinned ? 'fa-thumbtack transform rotate-45' : 'fa-thumbtack'"></i>
-                    </button>
                     <div class="relative">
                         <button @click="showScaleMenu = !showScaleMenu" class="p-2 rounded hover:bg-gray-700 flex items-center">
                             <i class="fas fa-search-plus mr-1"></i> {{ Math.round(scale * 100) }}%
@@ -26,9 +21,24 @@ Vue.component('vm-display', {
                             <a @click.prevent="zoomToActual(); showScaleMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Actual Size (100%)</a>
                         </div>
                     </div>
-                     <button @click="sendCtrlAltDel" class="p-2 rounded hover:bg-gray-700" title="Send Ctrl+Alt+Del">
-                        <i class="fas fa-keyboard mr-1"></i> CAD
-                    </button>
+                    <div class="relative">
+                        <button @click="showKeyboardMenu = !showKeyboardMenu" class="p-2 rounded hover:bg-gray-700 flex items-center" title="Keyboard Shortcuts">
+                            <i class="fas fa-keyboard mr-1"></i> Shortcuts
+                        </button>
+                        <div v-if="showKeyboardMenu" class="absolute left-0 mt-1 py-1 w-48 bg-gray-700 rounded shadow-xl">
+                            <a @click.prevent="sendCtrlAltDel(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Ctrl+Alt+Delete</a>
+                            <a @click.prevent="sendPrintScreen(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Print Screen</a>
+                            <a @click.prevent="sendAltTab(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Alt+Tab</a>
+                            <hr class="border-gray-600 my-1">
+                            <a @click.prevent="sendCtrlC(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Ctrl+C (Copy)</a>
+                            <a @click.prevent="sendCtrlV(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Ctrl+V (Paste)</a>
+                            <a @click.prevent="sendCtrlX(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Ctrl+X (Cut)</a>
+                            <hr class="border-gray-600 my-1">
+                            <a @click.prevent="sendCtrlZ(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Ctrl+Z (Undo)</a>
+                            <a @click.prevent="sendCtrlY(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Ctrl+Y (Redo)</a>
+                            <a @click.prevent="sendWindowsKey(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Windows Key</a>
+                        </div>
+                    </div>
                     <!-- Add more desktop controls here -->
                 </div>
                 <!-- Right Aligned Controls -->
@@ -60,12 +70,19 @@ Vue.component('vm-display', {
                      <button @click="zoomToActual()" class="p-2 text-sm rounded hover:bg-gray-700">Actual</button>
                  </div>
                  <div class="flex justify-around w-full">
-                    <button @click="sendCtrlAltDel" class="p-2 rounded hover:bg-gray-700" title="Send Ctrl+Alt+Del"><i class="fas fa-keyboard text-lg"></i></button>
+                    <button @click="triggerVirtualKeyboard" class="p-2 rounded hover:bg-gray-700" title="Show Virtual Keyboard"><i class="fas fa-keyboard text-lg"></i></button>
                     <button @click="toggleFullscreen" class="p-2 rounded hover:bg-gray-700" title="Toggle Fullscreen"><i class="fas" :class="isFullscreen ? 'fa-compress' : 'fa-expand'"></i></button>
                     <button @click="closeMobileToolbar" class="p-2 rounded hover:bg-gray-700"><i class="fas fa-chevron-down text-lg"></i></button>
                     <button @click="closeDisplay" class="p-2 rounded bg-red-600 hover:bg-red-500" title="Close VM Display"><i class="fas fa-times text-lg"></i></button>
                  </div>
             </div>
+            
+            <!-- Virtual Keyboard Input (Hidden) -->
+            <input v-if="isMobile" ref="virtualKeyboardInput" type="text" 
+                   class="absolute opacity-0 pointer-events-none" 
+                   style="left: -9999px; top: -9999px;"
+                   @input="handleVirtualKeyboardInput"
+                   @blur="handleVirtualKeyboardBlur">
             
             <!-- Display Area -->
             <div class="flex-1 overflow-hidden touch-none" ref="container" 
@@ -108,9 +125,8 @@ Vue.component('vm-display', {
 
             // Toolbar State
             isDesktop: !(/Mobi|Android/i.test(navigator.userAgent)),
-            desktopToolbarHover: false,
-            desktopToolbarPinned: false,
             showScaleMenu: false,
+            showKeyboardMenu: false,
             isMobile: /Mobi|Android/i.test(navigator.userAgent),
             mobileToolbarOpen: false,
             
@@ -195,9 +211,6 @@ Vue.component('vm-display', {
 
     methods: {
         // --- Toolbar Actions ---
-        togglePinDesktopToolbar() {
-            this.desktopToolbarPinned = !this.desktopToolbarPinned;
-        },
         openMobileToolbar() {
             this.mobileToolbarOpen = true;
         },
@@ -451,6 +464,13 @@ Vue.component('vm-display', {
                     this.showScaleMenu = false;
                 }
             }
+            if (this.showKeyboardMenu) {
+                const keyboardButton = this.$el.querySelector('button > i.fa-keyboard')?.closest('button');
+                const keyboardMenu = this.$el.querySelector('div.absolute.left-0.mt-1.py-1.w-48.bg-gray-700');
+                if (keyboardButton && !keyboardButton.contains(event.target) && keyboardMenu && !keyboardMenu.contains(event.target)) {
+                    this.showKeyboardMenu = false;
+                }
+            }
         },
 
         // --- Input Event Handlers (Container Level for Pan/Zoom, Canvas for VM) ---
@@ -573,6 +593,7 @@ Vue.component('vm-display', {
         handleGlobalKeyDown(e) {
             if (e.key === 'Escape') {
                 if (this.showScaleMenu) this.showScaleMenu = false;
+                if (this.showKeyboardMenu) this.showKeyboardMenu = false;
                 if (this.isMobile && this.mobileToolbarOpen) this.closeMobileToolbar();
             }
 
@@ -749,6 +770,96 @@ Vue.component('vm-display', {
         handleFullscreenChange() {
             this.isFullscreen = !!document.fullscreenElement;
             this.$nextTick(this.fitToWindow);
+        },
+
+        // --- Virtual Keyboard Handling ---
+        triggerVirtualKeyboard() {
+            if (this.isMobile && this.$refs.virtualKeyboardInput) {
+                // Focus the hidden input to trigger the virtual keyboard
+                this.$refs.virtualKeyboardInput.focus();
+                // Clear any previous text
+                this.$refs.virtualKeyboardInput.value = '';
+            }
+        },
+        handleVirtualKeyboardInput(e) {
+            if (!this.connected) return;
+            const text = e.target.value;
+            
+            // Send each character as individual key events
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                this.socket.emit('vm_input', { type: 'keydown', key: char, code: `Key${char.toUpperCase()}` });
+                this.socket.emit('vm_input', { type: 'keyup', key: char, code: `Key${char.toUpperCase()}` });
+            }
+            
+            // Clear the input after processing
+            e.target.value = '';
+        },
+        handleVirtualKeyboardBlur() {
+            // Virtual keyboard is being hidden, nothing special to do
+        },
+
+        // --- Keyboard Shortcut Handling ---
+        sendCtrlAltDel() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Control', code: 'ControlLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Alt', code: 'AltLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Delete', code: 'Delete' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Delete', code: 'Delete' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Alt', code: 'AltLeft' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Control', code: 'ControlLeft' });
+        },
+        sendPrintScreen() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'PrintScreen', code: 'PrintScreen' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'PrintScreen', code: 'PrintScreen' });
+        },
+        sendAltTab() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Alt', code: 'AltLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Tab', code: 'Tab' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Tab', code: 'Tab' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Alt', code: 'AltLeft' });
+        },
+        sendCtrlC() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Control', code: 'ControlLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'c', code: 'KeyC' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'c', code: 'KeyC' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Control', code: 'ControlLeft' });
+        },
+        sendCtrlV() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Control', code: 'ControlLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'v', code: 'KeyV' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'v', code: 'KeyV' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Control', code: 'ControlLeft' });
+        },
+        sendCtrlX() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Control', code: 'ControlLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'x', code: 'KeyX' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'x', code: 'KeyX' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Control', code: 'ControlLeft' });
+        },
+        sendCtrlZ() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Control', code: 'ControlLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'z', code: 'KeyZ' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'z', code: 'KeyZ' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Control', code: 'ControlLeft' });
+        },
+        sendCtrlY() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Control', code: 'ControlLeft' });
+            this.socket.emit('vm_input', { type: 'keydown', key: 'y', code: 'KeyY' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'y', code: 'KeyY' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Control', code: 'ControlLeft' });
+        },
+        sendWindowsKey() {
+            if (!this.connected) return;
+            this.socket.emit('vm_input', { type: 'keydown', key: 'Meta', code: 'MetaLeft' });
+            this.socket.emit('vm_input', { type: 'keyup', key: 'Meta', code: 'MetaLeft' });
         },
     }
 });
