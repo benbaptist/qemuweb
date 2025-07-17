@@ -64,10 +64,19 @@ Vue.component('vm-display', {
             <div v-if="isMobile && mobileToolbarOpen"
                  class="absolute bottom-0 left-0 right-0 p-3 bg-gray-800 bg-opacity-90 z-40 flex flex-col gap-2 items-center text-white">
                  <div class="flex justify-around w-full mb-2">
-                    <button @click="setScale(1.0)" class="p-2 text-sm rounded hover:bg-gray-700">100%</button>
-                    <button @click="setScale(1.5)" class="p-2 text-sm rounded hover:bg-gray-700">150%</button>
                     <button @click="fitToWindow()" class="p-2 text-sm rounded hover:bg-gray-700">Fit</button>
-                     <button @click="zoomToActual()" class="p-2 text-sm rounded hover:bg-gray-700">Actual</button>
+                    <button @click="zoomToActual()" class="p-2 text-sm rounded hover:bg-gray-700">Actual</button>
+                    <div class="relative">
+                        <button @click="showMobileKeyboardMenu = !showMobileKeyboardMenu" class="p-2 text-sm rounded hover:bg-gray-700" title="Keyboard Shortcuts">Shortcuts</button>
+                        <div v-if="showMobileKeyboardMenu" class="absolute bottom-full left-0 mb-1 py-1 w-40 bg-gray-700 rounded shadow-xl">
+                            <a @click.prevent="sendCtrlAltDel(); showMobileKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">Ctrl+Alt+Del</a>
+                            <a @click.prevent="sendPrintScreen(); showMobileKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">Print Screen</a>
+                            <a @click.prevent="sendAltTab(); showMobileKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">Alt+Tab</a>
+                            <hr class="border-gray-600 my-1">
+                            <a @click.prevent="sendCtrlC(); showMobileKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">Copy</a>
+                            <a @click.prevent="sendCtrlV(); showMobileKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">Paste</a>
+                        </div>
+                    </div>
                  </div>
                  <div class="flex justify-around w-full">
                     <button @click="triggerVirtualKeyboard" class="p-2 rounded hover:bg-gray-700" title="Show Virtual Keyboard"><i class="fas fa-keyboard text-lg"></i></button>
@@ -78,11 +87,13 @@ Vue.component('vm-display', {
             </div>
             
             <!-- Virtual Keyboard Input (Hidden) -->
-            <input v-if="isMobile" ref="virtualKeyboardInput" type="text" 
-                   class="absolute opacity-0 pointer-events-none" 
-                   style="left: -9999px; top: -9999px;"
-                   @input="handleVirtualKeyboardInput"
-                   @blur="handleVirtualKeyboardBlur">
+            <textarea v-if="isMobile" ref="virtualKeyboardInput" 
+                      class="absolute opacity-0 pointer-events-none" 
+                      style="left: -9999px; top: -9999px; resize: none;"
+                      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                      @input="handleVirtualKeyboardInput"
+                      @keydown="handleVirtualKeyboardKeyDown"
+                      @blur="handleVirtualKeyboardBlur"></textarea>
             
             <!-- Display Area -->
             <div class="flex-1 overflow-hidden touch-none" ref="container" 
@@ -129,6 +140,7 @@ Vue.component('vm-display', {
             showKeyboardMenu: false,
             isMobile: /Mobi|Android/i.test(navigator.userAgent),
             mobileToolbarOpen: false,
+            showMobileKeyboardMenu: false,
             
             // Fullscreen State
             isFullscreen: false,
@@ -141,10 +153,15 @@ Vue.component('vm-display', {
                 activeTouches: 0,
                 isPinching: false,
                 isTwoFingerPanning: false,
-                // For single touch as mouse
+                // For trackpad-like behavior
                 lastSingleTouchPosition: null, 
-                isSingleTouchMovingMouse: false,
-                tapStartInfo: null, // { time: Date.now(), pos: {x,y}, clientPos: {x,y} }
+                singleTouchStartPosition: null,
+                isDraggingMouse: false,
+                tapStartInfo: null, // { time: Date.now(), pos: {x,y}, count: 1|2 }
+                twoFingerTapStartInfo: null,
+                // Current mouse position on VM
+                currentMouseX: 0,
+                currentMouseY: 0,
             },
             
             // Input state
@@ -288,6 +305,12 @@ Vue.component('vm-display', {
                     this.panX = 0;
                     this.panY = 0;
                     
+                    // Initialize mouse position to center of screen for mobile
+                    if (this.isMobile) {
+                        this.touchState.currentMouseX = data.width / 2;
+                        this.touchState.currentMouseY = data.height / 2;
+                    }
+                    
                     dimensionsChanged = true;
                 }
                 
@@ -302,6 +325,11 @@ Vue.component('vm-display', {
                         });
                     });
                 } else if (this.framesReceived === 1) {
+                    // Initialize mouse position for first frame on mobile
+                    if (this.isMobile) {
+                        this.touchState.currentMouseX = data.width / 2;
+                        this.touchState.currentMouseY = data.height / 2;
+                    }
                     this.$nextTick(this.fitToWindow);
                 }
             } catch (error) {
@@ -471,6 +499,13 @@ Vue.component('vm-display', {
                     this.showKeyboardMenu = false;
                 }
             }
+            if (this.showMobileKeyboardMenu) {
+                const mobileKeyboardButton = this.$el.querySelector('button[title="Keyboard Shortcuts"]');
+                const mobileKeyboardMenu = this.$el.querySelector('div.absolute.bottom-full.left-0.mb-1.py-1.w-40.bg-gray-700');
+                if (mobileKeyboardButton && !mobileKeyboardButton.contains(event.target) && mobileKeyboardMenu && !mobileKeyboardMenu.contains(event.target)) {
+                    this.showMobileKeyboardMenu = false;
+                }
+            }
         },
 
         // --- Input Event Handlers (Container Level for Pan/Zoom, Canvas for VM) ---
@@ -594,6 +629,7 @@ Vue.component('vm-display', {
             if (e.key === 'Escape') {
                 if (this.showScaleMenu) this.showScaleMenu = false;
                 if (this.showKeyboardMenu) this.showKeyboardMenu = false;
+                if (this.showMobileKeyboardMenu) this.showMobileKeyboardMenu = false;
                 if (this.isMobile && this.mobileToolbarOpen) this.closeMobileToolbar();
             }
 
@@ -638,14 +674,19 @@ Vue.component('vm-display', {
 
             if (e.touches.length === 1) {
                 const touch = e.touches[0];
-                this.touchState.isSingleTouchMovingMouse = true;
                 this.touchState.lastSingleTouchPosition = { x: touch.clientX, y: touch.clientY };
+                this.touchState.singleTouchStartPosition = { x: touch.clientX, y: touch.clientY };
+                this.touchState.isDraggingMouse = false;
                 this.touchState.tapStartInfo = { 
                     time: Date.now(), 
                     pos: { x: touch.clientX, y: touch.clientY },
+                    count: 1
                 };
-            } else if (e.touches.length >= 2) {
-                this.touchState.isSingleTouchMovingMouse = false; // Stop single touch if two fingers are down
+            } else if (e.touches.length === 2) {
+                // Two finger touch - stop any single finger activity and prepare for gestures
+                this.touchState.isDraggingMouse = false;
+                this.touchState.tapStartInfo = null;
+                
                 const touch1 = e.touches[0];
                 const touch2 = e.touches[1];
 
@@ -659,23 +700,63 @@ Vue.component('vm-display', {
                 const midY = (touch1.clientY + touch2.clientY) / 2;
                 this.touchState.lastTwoFingerPanPosition = { x: midX, y: midY };
                 this.touchState.isTwoFingerPanning = true;
+                
+                // Track two-finger tap
+                this.touchState.twoFingerTapStartInfo = {
+                    time: Date.now(),
+                    pos: { x: midX, y: midY }
+                };
             }
         },
         handleTouchMove(e) {
             if (!this.connected) return;
             // e.preventDefault(); // Already done at container level
 
-            if (e.touches.length === 1 && this.touchState.isSingleTouchMovingMouse) {
+            if (e.touches.length === 1 && this.touchState.lastSingleTouchPosition) {
                 const touch = e.touches[0];
-                // For mouse movement, we send absolute scaled coords to VM
-                const { x, y, valid } = this.getCanvasRelativeCoords(touch.clientX, touch.clientY);
-                if (valid) {
-                    this.socket.emit('vm_input', { type: 'mousemove', x, y, buttons: this.mouseButtons });
+                const currentPos = { x: touch.clientX, y: touch.clientY };
+                
+                // Calculate movement delta
+                const dx = currentPos.x - this.touchState.lastSingleTouchPosition.x;
+                const dy = currentPos.y - this.touchState.lastSingleTouchPosition.y;
+                
+                // Check if we should start dragging (movement threshold)
+                if (!this.touchState.isDraggingMouse && this.touchState.singleTouchStartPosition) {
+                    const totalDx = currentPos.x - this.touchState.singleTouchStartPosition.x;
+                    const totalDy = currentPos.y - this.touchState.singleTouchStartPosition.y;
+                    const totalDistance = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
+                    
+                    if (totalDistance > 10) { // Start dragging after 10px movement
+                        this.touchState.isDraggingMouse = true;
+                    }
                 }
-                // Update last position for tap-move threshold check
-                this.touchState.lastSingleTouchPosition = { x: touch.clientX, y: touch.clientY };
+                
+                // If dragging, move the mouse cursor by the delta (trackpad-like)
+                if (this.touchState.isDraggingMouse) {
+                    // Scale the movement based on current zoom level for better control
+                    const scaledDx = dx / this.scale;
+                    const scaledDy = dy / this.scale;
+                    
+                    // Update current mouse position
+                    this.touchState.currentMouseX += scaledDx;
+                    this.touchState.currentMouseY += scaledDy;
+                    
+                    // Clamp to VM dimensions
+                    this.touchState.currentMouseX = Math.max(0, Math.min(this.touchState.currentMouseX, this.vmCanvasWidth - 1));
+                    this.touchState.currentMouseY = Math.max(0, Math.min(this.touchState.currentMouseY, this.vmCanvasHeight - 1));
+                    
+                    // Send the mouse movement
+                    this.socket.emit('vm_input', { 
+                        type: 'mousemove', 
+                        x: Math.floor(this.touchState.currentMouseX), 
+                        y: Math.floor(this.touchState.currentMouseY), 
+                        buttons: this.mouseButtons 
+                    });
+                }
+                
+                this.touchState.lastSingleTouchPosition = currentPos;
 
-            } else if (e.touches.length >= 2 && (this.touchState.isPinching || this.touchState.isTwoFingerPanning)) {
+            } else if (e.touches.length === 2 && (this.touchState.isPinching || this.touchState.isTwoFingerPanning)) {
                 const touch1 = e.touches[0];
                 const touch2 = e.touches[1];
 
@@ -690,6 +771,9 @@ Vue.component('vm-display', {
                     const midClientX = (touch1.clientX + touch2.clientX) / 2;
                     const midClientY = (touch1.clientY + touch2.clientY) / 2;
                     this.setScale(newScale, midClientX, midClientY);
+                    
+                    // Clear two-finger tap since we're zooming
+                    this.touchState.twoFingerTapStartInfo = null;
                 }
                 this.touchState.lastPinchDistance = currentPinchDistance;
 
@@ -698,8 +782,14 @@ Vue.component('vm-display', {
                 const midY = (touch1.clientY + touch2.clientY) / 2;
                 const dx = midX - this.touchState.lastTwoFingerPanPosition.x;
                 const dy = midY - this.touchState.lastTwoFingerPanPosition.y;
-                this.panX += dx;
-                this.panY += dy;
+                
+                // Only pan if there's significant movement (avoid accidental panning during taps)
+                if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                    this.panX += dx;
+                    this.panY += dy;
+                    this.touchState.twoFingerTapStartInfo = null; // Clear tap since we're panning
+                }
+                
                 this.touchState.lastTwoFingerPanPosition = { x: midX, y: midY };
             }
         },
@@ -709,23 +799,55 @@ Vue.component('vm-display', {
             const TAP_DURATION_THRESHOLD = 250; // ms
             const TAP_MOVE_THRESHOLD_SQ = 15 * 15; // pixels squared for distance
 
+            // Handle single touch end (potential left click)
             if (this.touchState.activeTouches === 1 && e.touches.length === 0) {
-                // Single touch ended
-                if (this.touchState.tapStartInfo && this.touchState.lastSingleTouchPosition) {
+                if (this.touchState.tapStartInfo && !this.touchState.isDraggingMouse) {
                     const duration = Date.now() - this.touchState.tapStartInfo.time;
                     const dx = this.touchState.lastSingleTouchPosition.x - this.touchState.tapStartInfo.pos.x;
                     const dy = this.touchState.lastSingleTouchPosition.y - this.touchState.tapStartInfo.pos.y;
                     const distSq = dx*dx + dy*dy;
 
                     if (duration < TAP_DURATION_THRESHOLD && distSq < TAP_MOVE_THRESHOLD_SQ) {
-                        const { x, y, valid } = this.getCanvasRelativeCoords(this.touchState.tapStartInfo.pos.x, this.touchState.tapStartInfo.pos.y);
-                        if (valid) {
-                            this.socket.emit('vm_input', { type: 'mousedown', x, y, button: 0 });
-                            // Delay mouseup slightly to ensure it's registered as a click
-                            setTimeout(() => {
-                                this.socket.emit('vm_input', { type: 'mouseup', x, y, button: 0 });
-                            }, 50);
-                        }
+                        // Single finger tap = left click at current mouse position
+                        this.socket.emit('vm_input', { 
+                            type: 'mousedown', 
+                            x: Math.floor(this.touchState.currentMouseX), 
+                            y: Math.floor(this.touchState.currentMouseY), 
+                            button: 0 
+                        });
+                        setTimeout(() => {
+                            this.socket.emit('vm_input', { 
+                                type: 'mouseup', 
+                                x: Math.floor(this.touchState.currentMouseX), 
+                                y: Math.floor(this.touchState.currentMouseY), 
+                                button: 0 
+                            });
+                        }, 50);
+                    }
+                }
+            }
+            
+            // Handle two finger tap end (potential right click)
+            if (this.touchState.activeTouches === 2 && e.touches.length === 0) {
+                if (this.touchState.twoFingerTapStartInfo) {
+                    const duration = Date.now() - this.touchState.twoFingerTapStartInfo.time;
+                    
+                    if (duration < TAP_DURATION_THRESHOLD) {
+                        // Two finger tap = right click at current mouse position
+                        this.socket.emit('vm_input', { 
+                            type: 'mousedown', 
+                            x: Math.floor(this.touchState.currentMouseX), 
+                            y: Math.floor(this.touchState.currentMouseY), 
+                            button: 2 
+                        });
+                        setTimeout(() => {
+                            this.socket.emit('vm_input', { 
+                                type: 'mouseup', 
+                                x: Math.floor(this.touchState.currentMouseX), 
+                                y: Math.floor(this.touchState.currentMouseY), 
+                                button: 2 
+                            });
+                        }, 50);
                     }
                 }
             }
@@ -737,32 +859,47 @@ Vue.component('vm-display', {
             // Reset states based on remaining touches
             this.touchState.activeTouches = e.touches.length;
             if (e.touches.length === 0) {
-                this.touchState.isSingleTouchMovingMouse = false;
+                // All touches ended
+                this.touchState.isDraggingMouse = false;
                 this.touchState.isPinching = false;
                 this.touchState.isTwoFingerPanning = false;
                 this.touchState.lastPinchDistance = null;
                 this.touchState.tapStartInfo = null;
+                this.touchState.twoFingerTapStartInfo = null;
                 this.touchState.lastSingleTouchPosition = null;
+                this.touchState.singleTouchStartPosition = null;
             } else if (e.touches.length === 1) {
                 // Transitioned from multi-touch to single touch
                 this.touchState.isPinching = false;
                 this.touchState.isTwoFingerPanning = false;
-                this.touchState.isSingleTouchMovingMouse = true;
-                this.touchState.lastSingleTouchPosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-                this.touchState.tapStartInfo = { time: Date.now(), pos: {x: e.touches[0].clientX, y: e.touches[0].clientY }}; // New tap potential
-            } else if (e.touches.length >= 2) {
-                // Still multi-touch, re-initialize pinch/pan references
+                this.touchState.twoFingerTapStartInfo = null;
+                this.touchState.isDraggingMouse = false;
+                
+                const touch = e.touches[0];
+                this.touchState.lastSingleTouchPosition = { x: touch.clientX, y: touch.clientY };
+                this.touchState.singleTouchStartPosition = { x: touch.clientX, y: touch.clientY };
+                this.touchState.tapStartInfo = { 
+                    time: Date.now(), 
+                    pos: { x: touch.clientX, y: touch.clientY },
+                    count: 1
+                };
+            } else if (e.touches.length === 2) {
+                // Still two touches, re-initialize references
                 const touch1 = e.touches[0];
                 const touch2 = e.touches[1];
                 this.touchState.lastPinchDistance = Math.hypot(
                     touch2.clientX - touch1.clientX,
                     touch2.clientY - touch1.clientY
                 );
-                this.touchState.isPinching = true; // Assume still pinching
+                this.touchState.isPinching = true;
                 const midX = (touch1.clientX + touch2.clientX) / 2;
                 const midY = (touch1.clientY + touch2.clientY) / 2;
                 this.touchState.lastTwoFingerPanPosition = { x: midX, y: midY };
-                this.touchState.isTwoFingerPanning = true; // Assume still panning
+                this.touchState.isTwoFingerPanning = true;
+                this.touchState.twoFingerTapStartInfo = {
+                    time: Date.now(),
+                    pos: { x: midX, y: midY }
+                };
             }
         },
 
@@ -784,19 +921,97 @@ Vue.component('vm-display', {
         handleVirtualKeyboardInput(e) {
             if (!this.connected) return;
             const text = e.target.value;
+            const prevLength = e.target.dataset.prevLength || 0;
             
-            // Send each character as individual key events
-            for (let i = 0; i < text.length; i++) {
-                const char = text[i];
-                this.socket.emit('vm_input', { type: 'keydown', key: char, code: `Key${char.toUpperCase()}` });
-                this.socket.emit('vm_input', { type: 'keyup', key: char, code: `Key${char.toUpperCase()}` });
+            if (text.length > prevLength) {
+                // Text was added - send the new characters
+                const newText = text.substring(prevLength);
+                for (let char of newText) {
+                    this.sendKeyboardChar(char);
+                }
+            } else if (text.length < prevLength) {
+                // Text was deleted - send backspace
+                const deletedCount = prevLength - text.length;
+                for (let i = 0; i < deletedCount; i++) {
+                    this.socket.emit('vm_input', { type: 'keydown', key: 'Backspace', code: 'Backspace' });
+                    this.socket.emit('vm_input', { type: 'keyup', key: 'Backspace', code: 'Backspace' });
+                }
             }
             
-            // Clear the input after processing
-            e.target.value = '';
+            e.target.dataset.prevLength = text.length;
+        },
+        sendKeyboardChar(char) {
+            if (!this.connected) return;
+            
+            // Handle special characters
+            if (char === '\n') {
+                this.socket.emit('vm_input', { type: 'keydown', key: 'Enter', code: 'Enter' });
+                this.socket.emit('vm_input', { type: 'keyup', key: 'Enter', code: 'Enter' });
+            } else if (char === '\t') {
+                this.socket.emit('vm_input', { type: 'keydown', key: 'Tab', code: 'Tab' });
+                this.socket.emit('vm_input', { type: 'keyup', key: 'Tab', code: 'Tab' });
+            } else if (char === ' ') {
+                this.socket.emit('vm_input', { type: 'keydown', key: ' ', code: 'Space' });
+                this.socket.emit('vm_input', { type: 'keyup', key: ' ', code: 'Space' });
+            } else {
+                // Regular character
+                const code = this.getKeyCodeForChar(char);
+                this.socket.emit('vm_input', { type: 'keydown', key: char, code: code });
+                this.socket.emit('vm_input', { type: 'keyup', key: char, code: code });
+            }
+        },
+        getKeyCodeForChar(char) {
+            const upperChar = char.toUpperCase();
+            
+            // Numbers
+            if (char >= '0' && char <= '9') {
+                return `Digit${char}`;
+            }
+            
+            // Letters
+            if (upperChar >= 'A' && upperChar <= 'Z') {
+                return `Key${upperChar}`;
+            }
+            
+            // Special characters mapping
+            const specialKeys = {
+                '!': 'Digit1', '@': 'Digit2', '#': 'Digit3', '$': 'Digit4', '%': 'Digit5',
+                '^': 'Digit6', '&': 'Digit7', '*': 'Digit8', '(': 'Digit9', ')': 'Digit0',
+                '-': 'Minus', '_': 'Minus', '=': 'Equal', '+': 'Equal',
+                '[': 'BracketLeft', '{': 'BracketLeft', ']': 'BracketRight', '}': 'BracketRight',
+                '\\': 'Backslash', '|': 'Backslash', ';': 'Semicolon', ':': 'Semicolon',
+                "'": 'Quote', '"': 'Quote', ',': 'Comma', '<': 'Comma',
+                '.': 'Period', '>': 'Period', '/': 'Slash', '?': 'Slash',
+                '`': 'Backquote', '~': 'Backquote'
+            };
+            
+            return specialKeys[char] || 'Unidentified';
+        },
+        handleVirtualKeyboardKeyDown(e) {
+            if (!this.connected) return;
+            
+            // Handle special keys that might not trigger input events properly
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.socket.emit('vm_input', { type: 'keydown', key: 'Enter', code: 'Enter' });
+                this.socket.emit('vm_input', { type: 'keyup', key: 'Enter', code: 'Enter' });
+            } else if (e.key === 'Tab') {
+                e.preventDefault();
+                this.socket.emit('vm_input', { type: 'keydown', key: 'Tab', code: 'Tab' });
+                this.socket.emit('vm_input', { type: 'keyup', key: 'Tab', code: 'Tab' });
+            } else if (e.key === 'Backspace') {
+                // Let the input event handle backspace to maintain text state
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.socket.emit('vm_input', { type: 'keydown', key: 'Escape', code: 'Escape' });
+                this.socket.emit('vm_input', { type: 'keyup', key: 'Escape', code: 'Escape' });
+            }
         },
         handleVirtualKeyboardBlur() {
-            // Virtual keyboard is being hidden, nothing special to do
+            // Reset the previous length when keyboard is hidden
+            if (this.$refs.virtualKeyboardInput) {
+                this.$refs.virtualKeyboardInput.dataset.prevLength = 0;
+            }
         },
 
         // --- Keyboard Shortcut Handling ---
