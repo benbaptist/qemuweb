@@ -2,7 +2,6 @@ import asyncio
 import logging
 from typing import Optional, Tuple, Dict, Any
 import numpy as np
-from vncdotool import api as vnc_api
 import socketio
 from PIL import Image, UnidentifiedImageError
 import io
@@ -12,41 +11,38 @@ import socket
 import atexit
 import tempfile
 import PIL
+import time
+
+from .vnc_client import EventletVNCClient, VNCError
 
 logger = logging.getLogger(__name__)
 
-# Don't register the shutdown handler since it causes issues with eventlet
-# We'll handle cleanup in the disconnect method instead
-
-# Mapping from KeyboardEvent.key to vncdotool key names
-# vncdotool generally uses X11 keysym names (e.g., 'ctrl_l', 'alt_l', 'shift_l', 'enter', 'esc')
-# or simple characters.
+# Mapping from KeyboardEvent.key to VNC key codes
+# VNC uses X11 keysym values for key codes
 KEY_EVENT_MAP = {
-    "Control": "ctrl_l",
-    "Shift": "shift_l",
-    "Alt": "alt_l",
-    "Meta": "meta_l",  # 'super_l' or 'win' might also be options depending on VNC server
-    "Enter": "enter",
-    "Escape": "esc",
-    "ArrowUp": "up",
-    "ArrowDown": "down",
-    "ArrowLeft": "left",
-    "ArrowRight": "right",
-    "Backspace": "backspace",
-    "Delete": "delete",
-    "Home": "home",
-    "End": "end",
-    "PageUp": "pageup",
-    "PageDown": "pagedown",
-    "Insert": "insert",
-    "Tab": "tab",
-    " ": "space", # Explicitly map space
+    "Control": 0xffe3,  # XK_Control_L
+    "Shift": 0xffe1,    # XK_Shift_L
+    "Alt": 0xffe9,      # XK_Alt_L
+    "Meta": 0xffeb,     # XK_Super_L
+    "Enter": 0xff0d,    # XK_Return
+    "Escape": 0xff1b,   # XK_Escape
+    "ArrowUp": 0xff52,  # XK_Up
+    "ArrowDown": 0xff54, # XK_Down
+    "ArrowLeft": 0xff51, # XK_Left
+    "ArrowRight": 0xff53, # XK_Right
+    "Backspace": 0xff08, # XK_BackSpace
+    "Delete": 0xffff,   # XK_Delete
+    "Home": 0xff50,     # XK_Home
+    "End": 0xff57,      # XK_End
+    "PageUp": 0xff55,   # XK_Page_Up
+    "PageDown": 0xff56, # XK_Page_Down
+    "Insert": 0xff63,   # XK_Insert
+    "Tab": 0xff09,      # XK_Tab
+    " ": 0x0020,        # XK_space
     # Function keys
-    "F1": "f1", "F2": "f2", "F3": "f3", "F4": "f4",
-    "F5": "f5", "F6": "f6", "F7": "f7", "F8": "f8",
-    "F9": "f9", "F10": "f10", "F11": "f11", "F12": "f12",
-    # Add more mappings if needed, e.g. for numpad keys if data['code'] is used
-    # For characters like 'a', 'A', '$', these are typically passed as is.
+    "F1": 0xffbe, "F2": 0xffbf, "F3": 0xffc0, "F4": 0xffc1,
+    "F5": 0xffc2, "F6": 0xffc3, "F7": 0xffc4, "F8": 0xffc5,
+    "F9": 0xffc6, "F10": 0xffc7, "F11": 0xffc8, "F12": 0xffc9,
 }
 
 class VMDisplay:
@@ -55,26 +51,28 @@ class VMDisplay:
         self.port = port
         self.client = None
         self.connected = False
-        self.frame_interval = 1/10  # 10 FPS target
+        self.frame_interval = 1/15  # 15 FPS target (more reasonable)
         self._last_frame = None
         self._running = False
         self._buttons = 0  # Track button state locally
+        self._last_mouse_pos = (0, 0)  # Track last mouse position
+        self._adaptive_fps = True  # Enable adaptive frame rate
+        self._last_frame_time = 0
+        self._consecutive_identical_frames = 0
         logger.info(f"VMDisplay initialized with host={host}, port={port}")
         
     def connect_and_stream(self, sio: socketio.AsyncServer, room: str):
         """Connect to VNC and start streaming frames"""
         try:
             logger.info(f"Attempting to connect to VNC server at {self.host}:{self.port}")
-            try:
-                # Connect using the proper API
-                server = f"{self.host}::{self.port}"  # Format required by vncdotool
-                self.client = vnc_api.connect(server, password=None)
-                self.client.timeout = 5  # Set a reasonable timeout
-                logger.info("VNC client connection established")
-                
-            except Exception as e:
-                logger.error(f"VNC connection failed: {e}", exc_info=True)
-                sio.emit('error', {'message': f'Failed to connect to VNC server: {str(e)}'}, room=room)
+            
+            # Create the new VNC client
+            self.client = EventletVNCClient(self.host, self.port)
+            
+            # Connect to VNC server
+            if not self.client.connect():
+                logger.error("Failed to connect to VNC server")
+                sio.emit('error', {'message': 'Failed to connect to VNC server'}, room=room)
                 return
                 
             self.connected = True
@@ -85,75 +83,87 @@ class VMDisplay:
             frames_sent = 0
             consecutive_errors = 0
             last_resolution = None
+            last_health_check = time.time()
+            health_check_interval = 10  # Check connection health every 10 seconds
             
             while self._running and self.connected:
                 try:
-                    # Create a temporary file instead of using a BytesIO
-                    # vncdotool's captureScreen expects a file-like object but works better with actual files
-                    with tempfile.NamedTemporaryFile(suffix='.png') as temp_file:
-                        # Call captureScreen and wait for it to complete
-                        # This returns the client instance when done
-                        self.client.captureScreen(temp_file.name)
-                        
-                        # Rewind the file for reading
-                        temp_file.flush()
-                        temp_file.seek(0)
-                        
-                        # Now we can safely open the image with PIL
-                        img = Image.open(temp_file.name)
-                        width, height = img.size
-                        
-                        # Check if resolution changed
-                        current_resolution = (width, height)
-                        if last_resolution != current_resolution:
-                            if last_resolution:
-                                logger.info(f"Resolution changed from {last_resolution} to {current_resolution}")
-                            last_resolution = current_resolution
-                            self._last_frame = None  # Force full frame update on resolution change
-                        
-                        # Convert to base64
-                        output = io.BytesIO()
-                        img.save(output, format='PNG', optimize=False, quality=100)
-                        img_b64 = base64.b64encode(output.getvalue()).decode('utf-8')
-                        
-                        # Only emit if the frame has changed
-                        if img_b64 != self._last_frame:
-                            try:
-                                sio.emit('vm_frame', {
-                                    'frame': img_b64,
-                                    'width': width,
-                                    'height': height,
-                                    'encoding': 'base64'
-                                }, room=room)
-                                self._last_frame = img_b64
-                                frames_sent += 1
-                                logger.debug(f"Sent frame {frames_sent} with dimensions {width}x{height}")
-                                consecutive_errors = 0  # Reset error counter on success
-                            except Exception as e:
-                                logger.error(f"Failed to emit frame: {e}", exc_info=True)
-                                eventlet.sleep(self.frame_interval)
-                                continue
+                    # Periodic connection health check
+                    current_time = time.time()
+                    if current_time - last_health_check > health_check_interval:
+                        if not self.client.is_connected():
+                            logger.warning("Connection health check failed, attempting reconnect")
+                            if not self._attempt_reconnect():
+                                logger.error("Failed to reconnect during health check")
+                                break
+                        last_health_check = current_time
                     
-                except (UnidentifiedImageError, IOError) as e:
+                    # Capture screen using the new VNC client
+                    img = self.client.capture_screen()
+                    
+                    if img is None:
+                        consecutive_errors += 1
+                        logger.warning("Failed to capture screen, got None")
+                        if consecutive_errors > 5:
+                            logger.error("Too many consecutive capture failures, stopping stream")
+                            break
+                        eventlet.sleep(self.frame_interval * 2)
+                        continue
+                    
+                    width, height = img.size
+                    
+                    # Check if resolution changed
+                    current_resolution = (width, height)
+                    if last_resolution != current_resolution:
+                        if last_resolution:
+                            logger.info(f"Resolution changed from {last_resolution} to {current_resolution}")
+                        last_resolution = current_resolution
+                        self._last_frame = None  # Force full frame update on resolution change
+                    
+                    # Convert to base64
+                    output = io.BytesIO()
+                    img.save(output, format='PNG', optimize=True, compress_level=1)
+                    img_b64 = base64.b64encode(output.getvalue()).decode('utf-8')
+                    
+                    # Adaptive frame rate based on content changes
+                    current_time = time.time()
+                    frame_changed = (img_b64 != self._last_frame)
+                    
+                    if frame_changed:
+                        self._consecutive_identical_frames = 0
+                        try:
+                            sio.emit('vm_frame', {
+                                'frame': img_b64,
+                                'width': width,
+                                'height': height,
+                                'encoding': 'base64'
+                            }, room=room)
+                            self._last_frame = img_b64
+                            frames_sent += 1
+                            logger.debug(f"Sent frame {frames_sent} with dimensions {width}x{height}")
+                            consecutive_errors = 0  # Reset error counter on success
+                        except Exception as e:
+                            logger.error(f"Failed to emit frame: {e}", exc_info=True)
+                            eventlet.sleep(self.frame_interval)
+                            continue
+                    else:
+                        self._consecutive_identical_frames += 1
+                        
+                    # Update frame timing
+                    self._last_frame_time = current_time
+                    
+                except (UnidentifiedImageError, IOError, VNCError) as e:
                     # Handle image-specific errors
                     consecutive_errors += 1
                     logger.error(f"Image error in streaming loop: {e}")
                     # If we get too many consecutive errors, we might need to reconnect
                     if consecutive_errors > 3:
-                        try:
-                            logger.warning("Multiple consecutive errors, attempting to refresh VNC connection")
-                            # Try to refresh the connection without full disconnect
-                            if self.client:
-                                try:
-                                    # Force a frame refresh
-                                    self.client.refreshScreen(incremental=False)
-                                    # Reset counters after recovery attempt
-                                    consecutive_errors = 0
-                                    self._last_frame = None  # Force next frame to be sent
-                                except Exception as refresh_error:
-                                    logger.error(f"Failed to refresh screen: {refresh_error}")
-                        except Exception as reconnect_error:
-                            logger.error(f"Failed to recover connection: {reconnect_error}")
+                        logger.warning("Multiple consecutive errors, attempting to reconnect")
+                        if self._attempt_reconnect():
+                            consecutive_errors = 0
+                        else:
+                            logger.error("Failed to reconnect after image errors")
+                            break
                     
                     eventlet.sleep(self.frame_interval * 2)  # Slightly longer delay on error
                     continue
@@ -165,28 +175,24 @@ class VMDisplay:
                     # If there are too many consecutive errors, we might need to reconnect
                     if consecutive_errors > 5:
                         logger.warning("Too many consecutive errors, reconnecting to VNC server")
-                        try:
-                            # Attempt to disconnect and reconnect
-                            if self.client:
-                                try:
-                                    self.client.disconnect()
-                                except:
-                                    pass
-                                
-                            # Reconnect using the same server
-                            server = f"{self.host}::{self.port}"
-                            self.client = vnc_api.connect(server, password=None)
-                            self.client.timeout = 5
-                            logger.info("VNC client reconnected after errors")
+                        if self._attempt_reconnect():
                             consecutive_errors = 0
-                            self._last_frame = None  # Force next frame to be sent
-                        except Exception as reconnect_error:
-                            logger.error(f"Failed to reconnect: {reconnect_error}")
+                        else:
+                            logger.error("Failed to reconnect after general errors")
+                            break
                     
                     eventlet.sleep(self.frame_interval * 2)  # Slightly longer delay on error
                     continue
                     
-                eventlet.sleep(self.frame_interval)
+                # Adaptive frame rate: sleep longer if no changes
+                if self._adaptive_fps and self._consecutive_identical_frames > 0:
+                    # Gradually increase sleep time for static content
+                    adaptive_multiplier = min(4, 1 + (self._consecutive_identical_frames / 10))
+                    sleep_time = self.frame_interval * adaptive_multiplier
+                else:
+                    sleep_time = self.frame_interval
+                    
+                eventlet.sleep(sleep_time)
                 
             logger.info(f"Streaming stopped after sending {frames_sent} frames")
             
@@ -216,6 +222,24 @@ class VMDisplay:
                 self.client = None
                 
         logger.info("Disconnected from VNC server")
+    
+    def _attempt_reconnect(self) -> bool:
+        """Attempt to reconnect to the VNC server"""
+        try:
+            if self.client:
+                self.client.disconnect()
+            
+            self.client = EventletVNCClient(self.host, self.port)
+            if self.client.connect():
+                logger.info("VNC client reconnected successfully")
+                self._last_frame = None  # Force next frame to be sent
+                return True
+            else:
+                logger.error("Failed to reconnect to VNC server")
+                return False
+        except Exception as e:
+            logger.error(f"Error during reconnection attempt: {e}")
+            return False
         
     def handle_input(self, event_type: str, data: Dict[str, Any]):
         """Handle input events from the web client"""
@@ -228,81 +252,57 @@ class VMDisplay:
             if event_type == "mousemove":
                 x = int(data['x'])
                 y = int(data['y'])
-                # Client-side already clamps to VM dimensions.
-                # VNC protocol max (65535) clamping was redundant here.
+                self._last_mouse_pos = (x, y)
+                
                 logger.debug(f"Mouse move to {x},{y}")
-                self.client.mouseMove(x, y)
-                if self._buttons > 0: # If any button is held
-                    # mouseDrag is often equivalent to mouseMove with button down
-                    # depending on vncdotool's implementation.
-                    # Explicitly sending mouseMove ensures position update.
-                    # Some VNC servers might need specific drag calls if available in vncdotool,
-                    # but mouseMove with buttons pressed is standard.
-                    # For now, assuming vncdotool handles mouseMove as drag if buttons are pressed,
-                    # or that the VNC server interprets it correctly.
-                    # If not, self.client.mouseDrag(x, y, self._buttons) might be needed if API supports it.
-                    # vncdotool api.py indicates mouseMove is sufficient.
-                    pass # mouseMove already called
+                self.client.send_pointer_event(x, y, self._buttons)
                 
             elif event_type == "mousedown":
                 x = int(data['x'])
                 y = int(data['y'])
-                # Client-side already clamps to VM dimensions.
                 button_from_client = data.get('button', 0)  # 0:left, 1:middle, 2:right
                 
-                # Assuming vncdotool expects 1-indexed buttons for mouseDown/mouseUp
-                # (1:left, 2:middle, 3:right) based on CLI 'click 1'
-                vnc_button = button_from_client + 1
-                
-                button_mask = 1 << button_from_client  # For local _buttons state (0-indexed based mask)
+                # Convert client button to VNC button mask
+                button_mask = 1 << button_from_client  # VNC uses 1:left, 2:middle, 4:right
                 self._buttons |= button_mask  # Add button to local state
-
-                logger.debug(f"Mouse down at {x},{y} client_button {button_from_client} vnc_button {vnc_button} mask {button_mask}")
-                self.client.mouseMove(x, y) # Ensure cursor is at the correct position
-                self.client.mouseDown(vnc_button)
+                
+                logger.debug(f"Mouse down at {x},{y} client_button {button_from_client} mask {button_mask}")
+                self._last_mouse_pos = (x, y)
+                self.client.send_pointer_event(x, y, self._buttons)
                 
             elif event_type == "mouseup":
                 x = int(data['x'])
                 y = int(data['y'])
-                # Client-side already clamps to VM dimensions.
                 button_from_client = data.get('button', 0)  # 0:left, 1:middle, 2:right
-
-                # Assuming vncdotool expects 1-indexed buttons
-                vnc_button = button_from_client + 1
-
+                
+                # Convert client button to VNC button mask
                 button_mask = 1 << button_from_client
                 self._buttons &= ~button_mask  # Remove button from local state
-
-                logger.debug(f"Mouse up at {x},{y} client_button {button_from_client} vnc_button {vnc_button} mask {button_mask}")
-                self.client.mouseMove(x, y) # Ensure cursor is at the correct position
-                self.client.mouseUp(vnc_button)
+                
+                logger.debug(f"Mouse up at {x},{y} client_button {button_from_client} mask {button_mask}")
+                self._last_mouse_pos = (x, y)
+                self.client.send_pointer_event(x, y, self._buttons)
                 
             elif event_type == "keydown" or event_type == "keyup":
                 original_key_name = data['key']
                 
-                # Attempt to map common KeyboardEvent.key values to vncdotool/X11 key names
-                # For single characters (len == 1), pass them directly.
-                # Otherwise, use the map. Case-sensitive for map lookup.
+                # Map keys to VNC key codes
+                vnc_key_code = None
                 if len(original_key_name) == 1:
-                    vnc_key_name = original_key_name
+                    # Single character - use ASCII/Unicode value
+                    vnc_key_code = ord(original_key_name)
                 else:
-                    vnc_key_name = KEY_EVENT_MAP.get(original_key_name)
-
-                if vnc_key_name:
+                    # Use the mapping table
+                    vnc_key_code = KEY_EVENT_MAP.get(original_key_name)
+                
+                if vnc_key_code:
                     action = "down" if event_type == "keydown" else "up"
-                    logger.debug(f"Key {action}: original '{original_key_name}', vnc_key '{vnc_key_name}' (code: {data.get('code')})")
-                    if event_type == "keydown":
-                        self.client.keyDown(vnc_key_name)
-                    else:
-                        self.client.keyUp(vnc_key_name)
+                    is_down = (event_type == "keydown")
+                    logger.debug(f"Key {action}: original '{original_key_name}', vnc_code '{vnc_key_code}' (code: {data.get('code')})")
+                    self.client.send_key_event(vnc_key_code, is_down)
                 else:
-                    # Fallback for unmapped keys: try sending original_key_name, though it might not work.
-                    # Log a warning. Using data['code'] might be an alternative for some keys if 'key' fails.
-                    logger.warning(f"No explicit VNC key mapping for '{original_key_name}' (code: {data.get('code')}). Attempting to send as is.")
-                    if event_type == "keydown":
-                        self.client.keyDown(original_key_name)
-                    else:
-                        self.client.keyUp(original_key_name)
+                    # Fallback for unmapped keys
+                    logger.warning(f"No VNC key mapping for '{original_key_name}' (code: {data.get('code')})")
                         
         except Exception as e:
             logger.error(f"Error handling input event {event_type}: {e}", exc_info=True)

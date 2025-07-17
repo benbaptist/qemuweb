@@ -47,7 +47,7 @@ class DisplayConfig:
     password: Optional[str] = None
     port: Optional[int] = None
     websocket_port: Optional[int] = None
-    relative_mouse: bool = True  # New field to toggle relative mouse mode
+    absolute_mouse: bool = True  # Enable absolute mouse positioning (tablet mode)
 
     def to_dict(self):
         return {
@@ -56,7 +56,7 @@ class DisplayConfig:
             "password": self.password,
             "port": self.port,
             "websocket_port": self.websocket_port,
-            "relative_mouse": self.relative_mouse  # Include in dict
+            "absolute_mouse": self.absolute_mouse  # Include in dict
         }
 
     @staticmethod
@@ -70,11 +70,18 @@ class DisplayConfig:
             display_type = "vnc"
             logging.warning("SPICE requested but not available, falling back to VNC")
         
+        # Handle both old and new field names for mouse mode
+        absolute_mouse = data.get("absolute_mouse")
+        if absolute_mouse is None:
+            # Backward compatibility: convert old relative_mouse to new absolute_mouse
+            relative_mouse = data.get("relative_mouse", True)
+            absolute_mouse = relative_mouse  # Old relative_mouse=True meant tablet mode (absolute)
+        
         display = DisplayConfig(
             type=display_type,
             address=data.get("address", "0.0.0.0"),
             password=data.get("password"),
-            relative_mouse=data.get("relative_mouse", True)  # Set default to True
+            absolute_mouse=absolute_mouse
         )
         if "port" in data:
             display.port = int(data["port"]) if data["port"] else None
@@ -591,11 +598,11 @@ class VMManager:
             # Add USB controller
             cmd.extend(["-device", "qemu-xhci,id=xhci"])  # USB 3.0 controller with ID
             
-            # Check if relative mouse mode is enabled
-            if vm.display.relative_mouse:
-                cmd.extend(["-device", "usb-tablet,bus=xhci.0"])  # Connect tablet for relative mouse movement
+            # Add mouse device based on absolute_mouse setting
+            if vm.display.absolute_mouse:
+                cmd.extend(["-device", "usb-tablet,bus=xhci.0"])  # Tablet provides absolute positioning
             else:
-                cmd.extend(["-device", "usb-mouse,bus=xhci.0"])  # Connect standard mouse
+                cmd.extend(["-device", "usb-mouse,bus=xhci.0"])  # Standard mouse provides relative positioning
             
             # Handle display configuration
             if vm.display.type == "vnc":
