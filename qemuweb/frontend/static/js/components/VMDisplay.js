@@ -133,6 +133,7 @@ Vue.component('vm-display', {
             panY: 0,
             isPanningWithMouse: false, // Specifically for mouse dragging
             lastMousePanPosition: { x: 0, y: 0 },
+            isInFitToWindowMode: false, // Track if user is in fit-to-window mode
 
             // Toolbar State
             isDesktop: !(/Mobi|Android/i.test(navigator.userAgent)),
@@ -153,6 +154,8 @@ Vue.component('vm-display', {
                 activeTouches: 0,
                 isPinching: false,
                 isTwoFingerPanning: false,
+                hasPerformedGesture: false, // Track if any gesture occurred during this touch session
+                gestureThreshold: 10, // Minimum movement to consider a gesture
                 // For trackpad-like behavior
                 lastSingleTouchPosition: null, 
                 singleTouchStartPosition: null,
@@ -214,7 +217,7 @@ Vue.component('vm-display', {
             }
             // Initial fit will happen on first frame or if vmCanvas dimensions already known
             if(this.vmCanvasWidth > 0 && this.vmCanvasHeight > 0){
-                this.fitToWindow();
+                this.fitToWindow(); // Enable fit-to-window mode by default
             }
             if (this.$refs.canvas) {
                  this.$refs.canvas.focus();
@@ -320,7 +323,7 @@ Vue.component('vm-display', {
                     // Use multiple nextTick calls to ensure DOM is fully updated
                     this.$nextTick(() => {
                         this.$nextTick(() => {
-                            this.fitToWindow();
+                            this.fitToWindow(); // Enable fit-to-window mode on resolution change
                             console.log(`Resolution change handled: canvas=${canvas.width}x${canvas.height}, scale=${this.scale}`);
                         });
                     });
@@ -330,7 +333,7 @@ Vue.component('vm-display', {
                         this.touchState.currentMouseX = data.width / 2;
                         this.touchState.currentMouseY = data.height / 2;
                     }
-                    this.$nextTick(this.fitToWindow);
+                    this.$nextTick(() => this.fitToWindow()); // Enable fit-to-window mode on first frame
                 }
             } catch (error) {
                 console.error('Error loading frame:', error);
@@ -363,7 +366,7 @@ Vue.component('vm-display', {
                 // Fit to window after resolution change
                 this.$nextTick(() => {
                     this.$nextTick(() => {
-                        this.fitToWindow();
+                        this.fitToWindow(); // Enable fit-to-window mode on resolution change
                         console.log(`Resolution change pre-handled successfully`);
                     });
                 });
@@ -393,8 +396,11 @@ Vue.component('vm-display', {
             
             this.checkBoundsAndAdjustPan();
             this.showScaleMenu = false;
+            
+            // Manual scaling disables fit-to-window mode
+            this.isInFitToWindowMode = false;
         },
-        fitToWindow() {
+        fitToWindow(isAutoResize = false) {
             if (!this.$refs.container || !this.vmCanvasWidth || !this.vmCanvasHeight) return;
             
             const container = this.$refs.container;
@@ -414,12 +420,19 @@ Vue.component('vm-display', {
             this.panY = (availableHeight - (this.vmCanvasHeight * this.scale)) / 2;
             
             this.checkBoundsAndAdjustPan();
+            
+            // Set fit-to-window mode flag when called explicitly (not during auto-resize)
+            if (!isAutoResize) {
+                this.isInFitToWindowMode = true;
+            }
         },
         zoomToActual() {
             if (!this.$refs.container) return;
             const containerRect = this.$refs.container.getBoundingClientRect();
             // Pivot around center of container for zoomToActual
             this.setScale(1.0, containerRect.left + containerRect.width / 2, containerRect.top + containerRect.height / 2);
+            // Zoom to actual disables fit-to-window mode
+            this.isInFitToWindowMode = false;
         },
         checkBoundsAndAdjustPan() {
             if (!this.$refs.container || !this.vmCanvasWidth || !this.vmCanvasHeight) return;
@@ -481,7 +494,15 @@ Vue.component('vm-display', {
         },
         setupResizeObserver() {
             this.resizeObserver = new ResizeObserver(() => {
-                 this.$nextTick(this.fitToWindow);
+                this.$nextTick(() => {
+                    if (this.isInFitToWindowMode) {
+                        // Only auto-fit if user was in fit-to-window mode
+                        this.fitToWindow(true); // Pass true to indicate this is an auto-resize
+                    } else {
+                        // Just adjust bounds for manual zoom mode
+                        this.checkBoundsAndAdjustPan();
+                    }
+                });
             });
         },
         handleClickOutsideScaleMenu(event) {
@@ -536,6 +557,7 @@ Vue.component('vm-display', {
             const scaleAmount = 1.1;
             let newScale = this.scale * (e.deltaY < 0 ? scaleAmount : 1 / scaleAmount);
             this.setScale(newScale, e.clientX, e.clientY);
+            // Note: setScale already disables fit-to-window mode
         },
 
         handleContainerMouseDown(e) {
@@ -562,6 +584,8 @@ Vue.component('vm-display', {
                 this.panY += dy;
                 this.lastMousePanPosition = { x: e.clientX, y: e.clientY };
                 this.checkBoundsAndAdjustPan(); // No snap during active pan, just bounds
+                // Manual panning disables fit-to-window mode
+                this.isInFitToWindowMode = false;
             }
             // Forward to canvas if target is canvas OR if a mouse button is held (drag off canvas)
             if (e.target === this.$refs.canvas || this.mouseButtons !== 0) {
@@ -726,8 +750,9 @@ Vue.component('vm-display', {
                     const totalDy = currentPos.y - this.touchState.singleTouchStartPosition.y;
                     const totalDistance = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
                     
-                    if (totalDistance > 10) { // Start dragging after 10px movement
+                    if (totalDistance > this.touchState.gestureThreshold) { // Start dragging after threshold movement
                         this.touchState.isDraggingMouse = true;
+                        this.touchState.hasPerformedGesture = true;
                     }
                 }
                 
@@ -767,13 +792,17 @@ Vue.component('vm-display', {
                 );
                 if (this.touchState.lastPinchDistance) {
                     const scaleFactor = currentPinchDistance / this.touchState.lastPinchDistance;
-                    const newScale = this.scale * scaleFactor;
-                    const midClientX = (touch1.clientX + touch2.clientX) / 2;
-                    const midClientY = (touch1.clientY + touch2.clientY) / 2;
-                    this.setScale(newScale, midClientX, midClientY);
-                    
-                    // Clear two-finger tap since we're zooming
-                    this.touchState.twoFingerTapStartInfo = null;
+                    // Only zoom if there's a significant scale change
+                    if (Math.abs(scaleFactor - 1.0) > 0.02) {
+                        const newScale = this.scale * scaleFactor;
+                        const midClientX = (touch1.clientX + touch2.clientX) / 2;
+                        const midClientY = (touch1.clientY + touch2.clientY) / 2;
+                        this.setScale(newScale, midClientX, midClientY);
+                        
+                        // Mark that a gesture occurred
+                        this.touchState.hasPerformedGesture = true;
+                        this.touchState.twoFingerTapStartInfo = null; // Clear tap since we're zooming
+                    }
                 }
                 this.touchState.lastPinchDistance = currentPinchDistance;
 
@@ -784,10 +813,13 @@ Vue.component('vm-display', {
                 const dy = midY - this.touchState.lastTwoFingerPanPosition.y;
                 
                 // Only pan if there's significant movement (avoid accidental panning during taps)
-                if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                if (Math.abs(dx) > this.touchState.gestureThreshold || Math.abs(dy) > this.touchState.gestureThreshold) {
                     this.panX += dx;
                     this.panY += dy;
+                    this.touchState.hasPerformedGesture = true; // Mark that a gesture occurred
                     this.touchState.twoFingerTapStartInfo = null; // Clear tap since we're panning
+                    // Manual panning disables fit-to-window mode
+                    this.isInFitToWindowMode = false;
                 }
                 
                 this.touchState.lastTwoFingerPanPosition = { x: midX, y: midY };
@@ -801,7 +833,7 @@ Vue.component('vm-display', {
 
             // Handle single touch end (potential left click)
             if (this.touchState.activeTouches === 1 && e.touches.length === 0) {
-                if (this.touchState.tapStartInfo && !this.touchState.isDraggingMouse) {
+                if (this.touchState.tapStartInfo && !this.touchState.isDraggingMouse && !this.touchState.hasPerformedGesture) {
                     const duration = Date.now() - this.touchState.tapStartInfo.time;
                     const dx = this.touchState.lastSingleTouchPosition.x - this.touchState.tapStartInfo.pos.x;
                     const dy = this.touchState.lastSingleTouchPosition.y - this.touchState.tapStartInfo.pos.y;
@@ -829,7 +861,7 @@ Vue.component('vm-display', {
             
             // Handle two finger tap end (potential right click)
             if (this.touchState.activeTouches === 2 && e.touches.length === 0) {
-                if (this.touchState.twoFingerTapStartInfo) {
+                if (this.touchState.twoFingerTapStartInfo && !this.touchState.hasPerformedGesture) {
                     const duration = Date.now() - this.touchState.twoFingerTapStartInfo.time;
                     
                     if (duration < TAP_DURATION_THRESHOLD) {
@@ -863,6 +895,7 @@ Vue.component('vm-display', {
                 this.touchState.isDraggingMouse = false;
                 this.touchState.isPinching = false;
                 this.touchState.isTwoFingerPanning = false;
+                this.touchState.hasPerformedGesture = false; // Reset gesture state
                 this.touchState.lastPinchDistance = null;
                 this.touchState.tapStartInfo = null;
                 this.touchState.twoFingerTapStartInfo = null;
@@ -906,7 +939,13 @@ Vue.component('vm-display', {
         // --- Fullscreen Handling ---
         handleFullscreenChange() {
             this.isFullscreen = !!document.fullscreenElement;
-            this.$nextTick(this.fitToWindow);
+            this.$nextTick(() => {
+                if (this.isInFitToWindowMode) {
+                    this.fitToWindow(true); // Auto-resize if in fit mode
+                } else {
+                    this.checkBoundsAndAdjustPan(); // Just adjust bounds for manual zoom
+                }
+            });
         },
 
         // --- Virtual Keyboard Handling ---
@@ -921,7 +960,7 @@ Vue.component('vm-display', {
         handleVirtualKeyboardInput(e) {
             if (!this.connected) return;
             const text = e.target.value;
-            const prevLength = e.target.dataset.prevLength || 0;
+            const prevLength = parseInt(e.target.dataset.prevLength || '0');
             
             if (text.length > prevLength) {
                 // Text was added - send the new characters
@@ -929,16 +968,10 @@ Vue.component('vm-display', {
                 for (let char of newText) {
                     this.sendKeyboardChar(char);
                 }
-            } else if (text.length < prevLength) {
-                // Text was deleted - send backspace
-                const deletedCount = prevLength - text.length;
-                for (let i = 0; i < deletedCount; i++) {
-                    this.socket.emit('vm_input', { type: 'keydown', key: 'Backspace', code: 'Backspace' });
-                    this.socket.emit('vm_input', { type: 'keyup', key: 'Backspace', code: 'Backspace' });
-                }
             }
+            // Note: We don't handle deletions here anymore since backspace is handled in keydown
             
-            e.target.dataset.prevLength = text.length;
+            e.target.dataset.prevLength = text.length.toString();
         },
         sendKeyboardChar(char) {
             if (!this.connected) return;
@@ -1000,11 +1033,28 @@ Vue.component('vm-display', {
                 this.socket.emit('vm_input', { type: 'keydown', key: 'Tab', code: 'Tab' });
                 this.socket.emit('vm_input', { type: 'keyup', key: 'Tab', code: 'Tab' });
             } else if (e.key === 'Backspace') {
-                // Let the input event handle backspace to maintain text state
+                // Always send backspace to VM, regardless of textarea content
+                this.socket.emit('vm_input', { type: 'keydown', key: 'Backspace', code: 'Backspace' });
+                this.socket.emit('vm_input', { type: 'keyup', key: 'Backspace', code: 'Backspace' });
+                // Don't prevent default - let textarea handle it for text tracking
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 this.socket.emit('vm_input', { type: 'keydown', key: 'Escape', code: 'Escape' });
                 this.socket.emit('vm_input', { type: 'keyup', key: 'Escape', code: 'Escape' });
+            } else if (e.key === 'Delete') {
+                e.preventDefault();
+                this.socket.emit('vm_input', { type: 'keydown', key: 'Delete', code: 'Delete' });
+                this.socket.emit('vm_input', { type: 'keyup', key: 'Delete', code: 'Delete' });
+            } else if (e.key.startsWith('Arrow')) {
+                // Handle arrow keys
+                e.preventDefault();
+                this.socket.emit('vm_input', { type: 'keydown', key: e.key, code: e.code });
+                this.socket.emit('vm_input', { type: 'keyup', key: e.key, code: e.code });
+            } else if (e.key === 'Home' || e.key === 'End' || e.key === 'PageUp' || e.key === 'PageDown') {
+                // Handle navigation keys
+                e.preventDefault();
+                this.socket.emit('vm_input', { type: 'keydown', key: e.key, code: e.code });
+                this.socket.emit('vm_input', { type: 'keyup', key: e.key, code: e.code });
             }
         },
         handleVirtualKeyboardBlur() {
