@@ -119,8 +119,19 @@ class VMDisplay:
                     if last_resolution != current_resolution:
                         if last_resolution:
                             logger.info(f"Resolution changed from {last_resolution} to {current_resolution}")
+                            # Emit specific resolution change event for better frontend handling
+                            try:
+                                sio.emit('resolution_changed', {
+                                    'old_width': last_resolution[0],
+                                    'old_height': last_resolution[1],
+                                    'new_width': width,
+                                    'new_height': height
+                                }, room=room)
+                            except Exception as e:
+                                logger.warning(f"Failed to emit resolution change event: {e}")
                         last_resolution = current_resolution
                         self._last_frame = None  # Force full frame update on resolution change
+                        self._last_frame_hash = None  # Reset frame hash on resolution change
                     
                     # Convert to base64 - Use JPEG for much better performance
                     img_array = np.array(img)
@@ -133,7 +144,8 @@ class VMDisplay:
                         self._consecutive_identical_frames += 1
                         # Don't send duplicate frames, just update counters
                         consecutive_errors = 0  # Reset error counter on successful capture
-                        eventlet.sleep(self.frame_interval * min(4, 1 + (self._consecutive_identical_frames / 10)))
+                        # Much shorter sleep for identical frames to quickly detect changes
+                        eventlet.sleep(0.01)  # 10ms instead of 33ms+
                         continue
                     
                     # Frame has changed, proceed with encoding
@@ -206,15 +218,10 @@ class VMDisplay:
                     eventlet.sleep(self.frame_interval * 2)  # Slightly longer delay on error
                     continue
                     
-                # Adaptive frame rate: sleep longer if no changes
-                if self._adaptive_fps and self._consecutive_identical_frames > 0:
-                    # Gradually increase sleep time for static content
-                    adaptive_multiplier = min(4, 1 + (self._consecutive_identical_frames / 10))
-                    sleep_time = self.frame_interval * adaptive_multiplier
-                else:
-                    sleep_time = self.frame_interval
-                    
-                eventlet.sleep(sleep_time)
+                # Only sleep on errors or when no frames are available
+                # Let VNC server pace us naturally for maximum frame rate
+                # Small yield to prevent blocking other greenlets
+                eventlet.sleep(0)
                 
             logger.info(f"Streaming stopped after sending {frames_sent} frames")
             

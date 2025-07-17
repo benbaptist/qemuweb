@@ -236,6 +236,7 @@ Vue.component('vm-display', {
             this.socket.on('disconnect', () => this.connected = false);
             this.socket.on('error', (error) => console.error('Socket error:', error));
             this.socket.on('vm_frame', this.handleFrame);
+            this.socket.on('resolution_changed', this.handleResolutionChange);
         },
         async handleFrame(data) {
             this.framesReceived++;
@@ -255,20 +256,76 @@ Vue.component('vm-display', {
 
                 let dimensionsChanged = false;
                 if (this.vmCanvasWidth !== data.width || this.vmCanvasHeight !== data.height) {
+                    console.log(`Resolution changed: ${this.vmCanvasWidth}x${this.vmCanvasHeight} → ${data.width}x${data.height}`);
+                    
+                    // Store old dimensions for smooth transition
+                    const oldWidth = this.vmCanvasWidth;
+                    const oldHeight = this.vmCanvasHeight;
+                    
+                    // Update our tracked dimensions
                     this.vmCanvasWidth = data.width;
                     this.vmCanvasHeight = data.height;
-                    canvas.width = data.width; // Set canvas actual drawing surface size
+                    
+                    // Update canvas internal drawing surface
+                    canvas.width = data.width;
                     canvas.height = data.height;
+                    
+                    // Reset scale and pan to prevent weird cropping
+                    this.scale = 1.0;
+                    this.panX = 0;
+                    this.panY = 0;
+                    
                     dimensionsChanged = true;
                 }
                 
                 ctx.drawImage(img, 0, 0);
 
-                if (dimensionsChanged || this.framesReceived === 1) {
+                if (dimensionsChanged) {
+                    // Use multiple nextTick calls to ensure DOM is fully updated
+                    this.$nextTick(() => {
+                        this.$nextTick(() => {
+                            this.fitToWindow();
+                            console.log(`Resolution change handled: canvas=${canvas.width}x${canvas.height}, scale=${this.scale}`);
+                        });
+                    });
+                } else if (this.framesReceived === 1) {
                     this.$nextTick(this.fitToWindow);
                 }
             } catch (error) {
                 console.error('Error loading frame:', error);
+            }
+        },
+
+        handleResolutionChange(data) {
+            console.log(`Received resolution change event: ${data.old_width}x${data.old_height} → ${data.new_width}x${data.new_height}`);
+            
+            // Pre-prepare for the resolution change
+            const canvas = this.$refs.canvas;
+            if (canvas) {
+                // Clear any stale content
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Update canvas size immediately
+                canvas.width = data.new_width;
+                canvas.height = data.new_height;
+                
+                // Update our tracking variables
+                this.vmCanvasWidth = data.new_width;
+                this.vmCanvasHeight = data.new_height;
+                
+                // Reset scale and positioning for clean slate
+                this.scale = 1.0;
+                this.panX = 0;
+                this.panY = 0;
+                
+                // Fit to window after resolution change
+                this.$nextTick(() => {
+                    this.$nextTick(() => {
+                        this.fitToWindow();
+                        console.log(`Resolution change pre-handled successfully`);
+                    });
+                });
             }
         },
 
