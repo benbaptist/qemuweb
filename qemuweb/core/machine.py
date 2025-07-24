@@ -12,6 +12,7 @@ import os
 import atexit
 from ..config.manager import config_manager, DEFAULT_CONFIG
 import uuid  # Import the uuid module
+from .qmp_client import QMPClient
 
 @dataclass
 class DiskDevice:
@@ -514,6 +515,133 @@ class VMManager:
             
         except Exception as e:
             logging.error(f"Error stopping VM {name}: {e}")
+            return False
+
+    def restart_vm(self, name: str) -> Tuple[bool, Optional[str]]:
+        """Restart a VM using ACPI shutdown."""
+        if name not in self.processes or self.processes[name].poll() is not None:
+            return False, "VM is not running"
+        
+        try:
+            vm = self.get_vm(name)
+            if not vm:
+                return False, "VM not found"
+            
+            # Try ACPI shutdown first
+            if self._acpi_shutdown(name):
+                # Wait for the VM to shut down
+                for _ in range(30):  # Wait up to 30 seconds
+                    if name not in self.processes or self.processes[name].poll() is not None:
+                        break
+                    time.sleep(1)
+                
+                # Start the VM again
+                return self.start_vm(name)
+            else:
+                return False, "Failed to send ACPI shutdown signal"
+                
+        except Exception as e:
+            logging.error(f"Error restarting VM {name}: {e}")
+            return False, str(e)
+
+    def reset_vm(self, name: str) -> Tuple[bool, Optional[str]]:
+        """Hard reset a VM."""
+        if name not in self.processes or self.processes[name].poll() is not None:
+            return False, "VM is not running"
+        
+        try:
+            vm = self.get_vm(name)
+            if not vm:
+                return False, "VM not found"
+            
+            # Send hard reset signal
+            if self._hard_reset(name):
+                logging.info(f"Hard reset sent to VM: {name}")
+                return True, None
+            else:
+                return False, "Failed to send hard reset signal"
+                
+        except Exception as e:
+            logging.error(f"Error resetting VM {name}: {e}")
+            return False, str(e)
+
+    def shutdown_vm(self, name: str) -> Tuple[bool, Optional[str]]:
+        """ACPI shutdown a VM."""
+        if name not in self.processes or self.processes[name].poll() is not None:
+            return False, "VM is not running"
+        
+        try:
+            if self._acpi_shutdown(name):
+                logging.info(f"ACPI shutdown sent to VM: {name}")
+                return True, None
+            else:
+                return False, "Failed to send ACPI shutdown signal"
+                
+        except Exception as e:
+            logging.error(f"Error shutting down VM {name}: {e}")
+            return False, str(e)
+
+    def power_off_vm(self, name: str) -> Tuple[bool, Optional[str]]:
+        """Force power off a VM (kill process)."""
+        if name not in self.processes or self.processes[name].poll() is not None:
+            return False, "VM is not running"
+        
+        try:
+            process = self.processes[name]
+            if process.poll() is None:  # Process is still running
+                # Force kill the process
+                process.kill()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+            
+            # Signal monitor thread to stop
+            if name in self.stop_events:
+                self.stop_events[name].set()
+            
+            # Clean up
+            self.processes.pop(name, None)
+            self.monitor_threads.pop(name, None)
+            self.stop_events.pop(name, None)
+            
+            logging.info(f"Force powered off VM: {name}")
+            
+            if self.stopped_callback:
+                self.stopped_callback(name)
+            
+            return True, None
+            
+        except Exception as e:
+            logging.error(f"Error force powering off VM {name}: {e}")
+            return False, str(e)
+
+    def _acpi_shutdown(self, name: str) -> bool:
+        """Send ACPI shutdown signal to VM via QMP."""
+        try:
+            vm = self.get_vm(name)
+            if not vm:
+                return False
+            
+            with QMPClient(vm.qmp_socket) as qmp:
+                return qmp.system_powerdown()
+                
+        except Exception as e:
+            logging.error(f"Error sending ACPI shutdown to VM {name}: {e}")
+            return False
+
+    def _hard_reset(self, name: str) -> bool:
+        """Send hard reset signal to VM via QMP."""
+        try:
+            vm = self.get_vm(name)
+            if not vm:
+                return False
+            
+            with QMPClient(vm.qmp_socket) as qmp:
+                return qmp.system_reset()
+                
+        except Exception as e:
+            logging.error(f"Error sending hard reset to VM {name}: {e}")
             return False
 
     def get_vm_status(self, name: str) -> Optional[Dict]:

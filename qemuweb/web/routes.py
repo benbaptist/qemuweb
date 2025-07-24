@@ -156,6 +156,42 @@ def stop_vm(name: str):
     logging.error(error_msg)
     return jsonify({'success': False, 'error': error_msg}), 400
 
+@bp.route('/api/vms/<name>/restart', methods=['POST'])
+def restart_vm(name: str):
+    """Restart a VM using ACPI shutdown."""
+    success, error = current_app.vm_manager.restart_vm(name)
+    if success:
+        return jsonify({'success': True})
+    logging.error(f"Failed to restart VM {name}: {error}")
+    return jsonify({'success': False, 'error': error}), 400
+
+@bp.route('/api/vms/<name>/reset', methods=['POST'])
+def reset_vm(name: str):
+    """Hard reset a VM."""
+    success, error = current_app.vm_manager.reset_vm(name)
+    if success:
+        return jsonify({'success': True})
+    logging.error(f"Failed to reset VM {name}: {error}")
+    return jsonify({'success': False, 'error': error}), 400
+
+@bp.route('/api/vms/<name>/shutdown', methods=['POST'])
+def shutdown_vm(name: str):
+    """ACPI shutdown a VM."""
+    success, error = current_app.vm_manager.shutdown_vm(name)
+    if success:
+        return jsonify({'success': True})
+    logging.error(f"Failed to shutdown VM {name}: {error}")
+    return jsonify({'success': False, 'error': error}), 400
+
+@bp.route('/api/vms/<name>/poweroff', methods=['POST'])
+def power_off_vm(name: str):
+    """Force power off a VM (kill process)."""
+    success, error = current_app.vm_manager.power_off_vm(name)
+    if success:
+        return jsonify({'success': True})
+    logging.error(f"Failed to power off VM {name}: {error}")
+    return jsonify({'success': False, 'error': error}), 400
+
 @bp.route('/api/vms/<name>/status', methods=['GET'])
 def get_vm_status(name: str):
     """Get VM status."""

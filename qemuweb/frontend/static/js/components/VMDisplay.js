@@ -39,6 +39,25 @@ Vue.component('vm-display', {
                             <a @click.prevent="sendWindowsKey(); showKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">Windows Key</a>
                         </div>
                     </div>
+                    <div class="relative">
+                        <button @click="showPowerMenu = !showPowerMenu" class="p-2 rounded hover:bg-gray-700 flex items-center" title="Power Management">
+                            <i class="fas fa-power-off mr-1"></i> Power
+                        </button>
+                        <div v-if="showPowerMenu" class="absolute left-0 mt-1 py-1 w-48 bg-gray-700 rounded shadow-xl">
+                            <a @click.prevent="restartVM(); showPowerMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">
+                                <i class="fas fa-redo mr-2"></i>Restart (ACPI)
+                            </a>
+                            <a @click.prevent="resetVM(); showPowerMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">
+                                <i class="fas fa-sync mr-2"></i>Reset (Hard)
+                            </a>
+                            <a @click.prevent="shutdownVM(); showPowerMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer">
+                                <i class="fas fa-stop mr-2"></i>Shutdown (ACPI)
+                            </a>
+                            <a @click.prevent="powerOffVM(); showPowerMenu = false" class="block px-3 py-1 text-red-300 hover:bg-red-600 cursor-pointer">
+                                <i class="fas fa-times mr-2"></i>Power Off (Kill)
+                            </a>
+                        </div>
+                    </div>
                     <!-- Add more desktop controls here -->
                 </div>
                 <!-- Right Aligned Controls -->
@@ -75,6 +94,23 @@ Vue.component('vm-display', {
                             <hr class="border-gray-600 my-1">
                             <a @click.prevent="sendCtrlC(); showMobileKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">Copy</a>
                             <a @click.prevent="sendCtrlV(); showMobileKeyboardMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">Paste</a>
+                        </div>
+                    </div>
+                    <div class="relative">
+                        <button @click="showMobilePowerMenu = !showMobilePowerMenu" class="p-2 text-sm rounded hover:bg-gray-700" title="Power Management">Power</button>
+                        <div v-if="showMobilePowerMenu" class="absolute bottom-full left-0 mb-1 py-1 w-40 bg-gray-700 rounded shadow-xl">
+                            <a @click.prevent="restartVM(); showMobilePowerMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">
+                                <i class="fas fa-redo mr-1"></i>Restart
+                            </a>
+                            <a @click.prevent="resetVM(); showMobilePowerMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">
+                                <i class="fas fa-sync mr-1"></i>Reset
+                            </a>
+                            <a @click.prevent="shutdownVM(); showMobilePowerMenu = false" class="block px-3 py-1 text-white hover:bg-gray-600 cursor-pointer text-sm">
+                                <i class="fas fa-stop mr-1"></i>Shutdown
+                            </a>
+                            <a @click.prevent="powerOffVM(); showMobilePowerMenu = false" class="block px-3 py-1 text-red-300 hover:bg-red-600 cursor-pointer text-sm">
+                                <i class="fas fa-times mr-1"></i>Power Off
+                            </a>
                         </div>
                     </div>
                  </div>
@@ -187,9 +223,11 @@ Vue.component('vm-display', {
             isDesktop: !(/Mobi|Android/i.test(navigator.userAgent)),
             showScaleMenu: false,
             showKeyboardMenu: false,
+            showPowerMenu: false,
             isMobile: /Mobi|Android/i.test(navigator.userAgent),
             mobileToolbarOpen: false,
             showMobileKeyboardMenu: false,
+            showMobilePowerMenu: false,
             
             // Fullscreen State
             isFullscreen: false,
@@ -738,11 +776,25 @@ Vue.component('vm-display', {
                     this.showKeyboardMenu = false;
                 }
             }
+            if (this.showPowerMenu) {
+                const powerButton = this.$el.querySelector('button > i.fa-power-off')?.closest('button');
+                const powerMenu = this.$el.querySelector('div.absolute.left-0.mt-1.py-1.w-48.bg-gray-700');
+                if (powerButton && !powerButton.contains(event.target) && powerMenu && !powerMenu.contains(event.target)) {
+                    this.showPowerMenu = false;
+                }
+            }
             if (this.showMobileKeyboardMenu) {
                 const mobileKeyboardButton = this.$el.querySelector('button[title="Keyboard Shortcuts"]');
                 const mobileKeyboardMenu = this.$el.querySelector('div.absolute.bottom-full.left-0.mb-1.py-1.w-40.bg-gray-700');
                 if (mobileKeyboardButton && !mobileKeyboardButton.contains(event.target) && mobileKeyboardMenu && !mobileKeyboardMenu.contains(event.target)) {
                     this.showMobileKeyboardMenu = false;
+                }
+            }
+            if (this.showMobilePowerMenu) {
+                const mobilePowerButton = this.$el.querySelector('button[title="Power Management"]');
+                const mobilePowerMenu = this.$el.querySelector('div.absolute.bottom-full.left-0.mb-1.py-1.w-40.bg-gray-700');
+                if (mobilePowerButton && !mobilePowerButton.contains(event.target) && mobilePowerMenu && !mobilePowerMenu.contains(event.target)) {
+                    this.showMobilePowerMenu = false;
                 }
             }
         },
@@ -871,7 +923,9 @@ Vue.component('vm-display', {
             if (e.key === 'Escape') {
                 if (this.showScaleMenu) this.showScaleMenu = false;
                 if (this.showKeyboardMenu) this.showKeyboardMenu = false;
+                if (this.showPowerMenu) this.showPowerMenu = false;
                 if (this.showMobileKeyboardMenu) this.showMobileKeyboardMenu = false;
+                if (this.showMobilePowerMenu) this.showMobilePowerMenu = false;
                 if (this.isMobile && this.mobileToolbarOpen) this.closeMobileToolbar();
             }
 
@@ -1467,6 +1521,87 @@ Vue.component('vm-display', {
             if (!this.connected) return;
             this.socket.emit('vm_input', { type: 'keydown', key: 'Meta', code: 'MetaLeft' });
             this.socket.emit('vm_input', { type: 'keyup', key: 'Meta', code: 'MetaLeft' });
+        },
+
+        // --- Power Management Methods ---
+        async restartVM() {
+            if (this.vmStatus !== 'running') return;
+            
+            try {
+                const response = await fetch(`/api/vms/${this.vmId}/restart`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `Failed to restart VM: ${response.statusText}`);
+                }
+
+                console.log('VM restart request sent successfully');
+            } catch (error) {
+                console.error('Failed to restart VM:', error);
+                // You could show an error message to the user here
+            }
+        },
+
+        async resetVM() {
+            if (this.vmStatus !== 'running') return;
+            
+            try {
+                const response = await fetch(`/api/vms/${this.vmId}/reset`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `Failed to reset VM: ${response.statusText}`);
+                }
+
+                console.log('VM reset request sent successfully');
+            } catch (error) {
+                console.error('Failed to reset VM:', error);
+                // You could show an error message to the user here
+            }
+        },
+
+        async shutdownVM() {
+            if (this.vmStatus !== 'running') return;
+            
+            try {
+                const response = await fetch(`/api/vms/${this.vmId}/shutdown`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `Failed to shutdown VM: ${response.statusText}`);
+                }
+
+                console.log('VM shutdown request sent successfully');
+            } catch (error) {
+                console.error('Failed to shutdown VM:', error);
+                // You could show an error message to the user here
+            }
+        },
+
+        async powerOffVM() {
+            if (this.vmStatus !== 'running') return;
+            
+            try {
+                const response = await fetch(`/api/vms/${this.vmId}/poweroff`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `Failed to power off VM: ${response.statusText}`);
+                }
+
+                console.log('VM power off request sent successfully');
+            } catch (error) {
+                console.error('Failed to power off VM:', error);
+                // You could show an error message to the user here
+            }
         },
     }
 });
