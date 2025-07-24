@@ -20,7 +20,8 @@ const app = new Vue({
         windowWidth: window.innerWidth,
         showFileBrowser: false,
         fileBrowserPath: '/',
-        fileBrowserCallback: null
+        fileBrowserCallback: null,
+        statusRefreshInterval: null
     },
     computed: {
         selectedVMState() {
@@ -299,18 +300,43 @@ const app = new Vue({
 
         async selectVM(vmName) {
             this.selectedVM = vmName;
+            if (this.statusRefreshInterval) {
+                clearInterval(this.statusRefreshInterval);
+                this.statusRefreshInterval = null;
+            }
             if (vmName) {
                 if (this.logRefreshInterval) {
                     clearInterval(this.logRefreshInterval);
                 }
-                
                 await this.fetchVMLogs(vmName);
-                
                 if (this.vmStates[vmName] === 'running') {
                     this.logRefreshInterval = setInterval(() => {
                         this.fetchVMLogs(vmName);
                     }, 5000);
+                    // Start polling for VM status (stats)
+                    this.statusRefreshInterval = setInterval(async () => {
+                        await this.fetchVMStatus(vmName);
+                    }, 2000);
+                    // Fetch immediately
+                    await this.fetchVMStatus(vmName);
                 }
+            }
+        },
+
+        async fetchVMStatus(vmName) {
+            try {
+                const response = await fetch(`/api/vms/${vmName}/status`);
+                if (response.ok) {
+                    const data = await response.json();
+                    // Update the VM in the vms array
+                    const idx = this.vms.findIndex(vm => vm.name === vmName);
+                    if (idx !== -1) {
+                        // Merge new stats into the VM object
+                        this.$set(this.vms, idx, Object.assign({}, this.vms[idx], data, { config: this.vms[idx].config }));
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching VM status:', error);
             }
         },
 
@@ -341,6 +367,18 @@ const app = new Vue({
         // WebSocket event listeners
         socket.on('vm_status', (data) => {
             this.$set(this.vmStates, data.name, data.running ? 'running' : 'stopped');
+            // If the selected VM changed state, start/stop polling
+            if (this.selectedVM === data.name) {
+                if (data.running && !this.statusRefreshInterval) {
+                    this.statusRefreshInterval = setInterval(async () => {
+                        await this.fetchVMStatus(data.name);
+                    }, 2000);
+                    this.fetchVMStatus(data.name);
+                } else if (!data.running && this.statusRefreshInterval) {
+                    clearInterval(this.statusRefreshInterval);
+                    this.statusRefreshInterval = null;
+                }
+            }
         });
 
         socket.on('vm_stopped', (data) => {
@@ -354,6 +392,9 @@ const app = new Vue({
     beforeDestroy() {
         if (this.logRefreshInterval) {
             clearInterval(this.logRefreshInterval);
+        }
+        if (this.statusRefreshInterval) {
+            clearInterval(this.statusRefreshInterval);
         }
         window.removeEventListener('resize', this.handleResize);
     }

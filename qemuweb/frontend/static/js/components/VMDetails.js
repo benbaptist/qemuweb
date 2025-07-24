@@ -133,16 +133,42 @@ Vue.component('vm-details', {
                 </div>
             </div>
 
-            <!-- Create/Update VM Modal -->
-            <create-vm-modal 
-                v-if="showModal" 
-                :show="showModal" 
-                :qemuCapabilities="qemuCapabilities" 
-                :vmData="vm" 
-                @create="handleCreateOrUpdate" 
-                @update="handleCreateOrUpdate" 
-                @close="showModal = false">
-            </create-vm-modal>
+            <!-- Runtime Stats (moved above Configuration) -->
+            <template v-if="vmState === 'running'">
+                <div class="px-6 mt-8">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4">Runtime Statistics</h3>
+                    <dl class="space-y-6">
+                        <div class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">CPU Usage</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.cpuUsage }}%</dd>
+                        </div>
+                        <div class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">Memory Usage</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.memoryMB }} MB</dd>
+                        </div>
+                        <div v-if="runtimeStats.displayPort" class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">Display Port</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.displayPort }}</dd>
+                        </div>
+                        <div v-if="vm.pid" class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">Process ID</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ vm.pid }}</dd>
+                        </div>
+                        <div v-if="vm.uptime" class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">Uptime</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ vm.uptime }} seconds</dd>
+                        </div>
+                        <div v-if="vm.network_rx !== undefined && vm.network_tx !== undefined" class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">Network RX</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ vm.network_rx }} bytes</dd>
+                        </div>
+                        <div v-if="vm.network_tx !== undefined" class="grid grid-cols-3 gap-4">
+                            <dt class="text-sm font-medium text-gray-500">Network TX</dt>
+                            <dd class="text-sm text-gray-900 col-span-2">{{ vm.network_tx }} bytes</dd>
+                        </div>
+                    </dl>
+                </div>
+            </template>
 
             <!-- VM Configuration Details -->
             <div class="px-6">
@@ -215,26 +241,16 @@ Vue.component('vm-details', {
                 </dl>
             </div>
 
-            <!-- Runtime Stats -->
-            <template v-if="vmState === 'running'">
-                <div class="px-6 mt-8">
-                    <h3 class="text-lg font-medium text-gray-900 mb-4">Runtime Statistics</h3>
-                    <dl class="space-y-6">
-                        <div class="grid grid-cols-3 gap-4">
-                            <dt class="text-sm font-medium text-gray-500">CPU Usage</dt>
-                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.cpuUsage }}%</dd>
-                        </div>
-                        <div class="grid grid-cols-3 gap-4">
-                            <dt class="text-sm font-medium text-gray-500">Memory Usage</dt>
-                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.memoryMB }} MB</dd>
-                        </div>
-                        <div v-if="runtimeStats.displayPort" class="grid grid-cols-3 gap-4">
-                            <dt class="text-sm font-medium text-gray-500">Display Port</dt>
-                            <dd class="text-sm text-gray-900 col-span-2">{{ runtimeStats.displayPort }}</dd>
-                        </div>
-                    </dl>
-                </div>
-            </template>
+            <!-- Create/Update VM Modal -->
+            <create-vm-modal 
+                v-if="showModal" 
+                :show="showModal" 
+                :qemuCapabilities="qemuCapabilities" 
+                :vmData="vm" 
+                @create="handleCreateOrUpdate" 
+                @update="handleCreateOrUpdate" 
+                @close="showModal = false">
+            </create-vm-modal>
         </div>
     `
 }); 
