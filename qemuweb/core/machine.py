@@ -48,6 +48,27 @@ class DiskDevice:
             readonly=data.get("readonly", False)
         )
 
+    @staticmethod
+    def create_blank_disk(path: str, size: int, fmt: str = "qcow2") -> bool:
+        """Create a blank disk image using qemu-img. Size is in megabytes."""
+        import shutil
+        import subprocess
+        qemu_img = shutil.which("qemu-img")
+        if not qemu_img:
+            logging.error("qemu-img not found in PATH")
+            return False
+        try:
+            # Example: qemu-img create -f qcow2 /path/to/disk.qcow2 10G
+            size_str = f"{size}M"
+            result = subprocess.run([qemu_img, "create", "-f", fmt, path, size_str], capture_output=True, text=True)
+            if result.returncode != 0:
+                logging.error(f"Failed to create disk image: {result.stderr}")
+                return False
+            return True
+        except Exception as e:
+            logging.error(f"Exception while creating disk image: {e}")
+            return False
+
 @dataclass
 class DisplayConfig:
     type: str = "vnc"  # Will be set based on QEMU capabilities
@@ -858,7 +879,3 @@ class VMManager:
             # Clean up when thread exits
             self.monitor_threads.pop(name, None)
             self.stop_events.pop(name, None)
-        
-        thread = threading.Thread(target=monitor_vm, daemon=True)
-        thread.start()
-        self.monitor_threads[name] = thread

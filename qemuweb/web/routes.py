@@ -267,6 +267,25 @@ def vm_display(vm_id):
     """Render the VM display page."""
     return render_template('vm_display.html', vm_id=vm_id)
 
+@bp.route('/api/disks/create', methods=['POST'])
+def create_disk():
+    """Create a new blank disk image using qemu-img."""
+    data = request.get_json()
+    path = data.get('path')
+    size = data.get('size')
+    fmt = data.get('format', 'qcow2')
+    if not path or not size:
+        return jsonify({'success': False, 'error': 'Missing path or size'}), 400
+    from ..core.machine import DiskDevice
+    try:
+        success = DiskDevice.create_blank_disk(path, int(size), fmt)
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to create disk image'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # WebSocket routes
 @socketio.on('connect')
 def handle_connect():

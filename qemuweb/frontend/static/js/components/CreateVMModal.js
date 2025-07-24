@@ -37,6 +37,13 @@ Vue.component('create-vm-modal', {
                 },
                 machine: this.vmData?.machine || '',
                 disks: this.vmData?.disks || []
+            },
+            createDisk: {
+                path: '',
+                size: 10240,
+                format: 'qcow2',
+                error: '',
+                creating: false
             }
         }
     },
@@ -174,6 +181,42 @@ Vue.component('create-vm-modal', {
         },
         switchTab(tabId) {
             this.activeTab = tabId;
+        },
+        async createBlankDisk() {
+            this.createDisk.error = '';
+            this.createDisk.creating = true;
+            try {
+                const response = await fetch('/api/disks/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: this.createDisk.path,
+                        size: this.createDisk.size,
+                        format: this.createDisk.format
+                    })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    // Add the new disk to the disks list
+                    this.newVM.disks.push({
+                        type: 'hdd',
+                        interface: 'virtio',
+                        path: this.createDisk.path,
+                        format: this.createDisk.format,
+                        readonly: false
+                    });
+                    // Reset fields
+                    this.createDisk.path = '';
+                    this.createDisk.size = 10240;
+                    this.createDisk.format = 'qcow2';
+                } else {
+                    this.createDisk.error = result.error || 'Failed to create disk image.';
+                }
+            } catch (e) {
+                this.createDisk.error = e.message || 'Failed to create disk image.';
+            } finally {
+                this.createDisk.creating = false;
+            }
         }
     },
     template: `
@@ -370,6 +413,38 @@ Vue.component('create-vm-modal', {
 
                             <!-- Storage Tab -->
                             <div v-if="activeTab === 'storage'" class="space-y-4">
+                                <!-- New Blank Disk Creator -->
+                                <div class="border rounded-lg p-4 bg-gray-50 mb-4">
+                                    <h4 class="text-md font-semibold mb-2">Create New Blank Disk</h4>
+                                    <div class="grid grid-cols-3 gap-4 mb-2">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">Path</label>
+                                            <input v-model="createDisk.path" type="text" placeholder="/var/lib/vm/newdisk.qcow2"
+                                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">Size (MB)</label>
+                                            <input v-model.number="createDisk.size" type="number" min="1"
+                                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">Format</label>
+                                            <select v-model="createDisk.format"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                                <option value="qcow2">QCOW2</option>
+                                                <option value="raw">Raw</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-3">
+                                        <button type="button" @click="createBlankDisk" :disabled="createDisk.creating"
+                                                class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50">
+                                            <span v-if="createDisk.creating">Creating...</span>
+                                            <span v-else>Create Disk</span>
+                                        </button>
+                                        <span v-if="createDisk.error" class="text-red-600 text-sm">{{ createDisk.error }}</span>
+                                    </div>
+                                </div>
                                 <div class="flex justify-between items-center">
                                     <h3 class="text-lg font-medium">Storage Devices</h3>
                                     <button type="button" @click="addDisk" 
