@@ -339,8 +339,12 @@ const app = new Vue({
         window.addEventListener('resize', this.handleResize);
 
         // WebSocket event listeners
-        socket.on('vm_state_change', (data) => {
+        socket.on('vm_status', (data) => {
             this.$set(this.vmStates, data.name, data.running ? 'running' : 'stopped');
+        });
+
+        socket.on('vm_stopped', (data) => {
+            this.$set(this.vmStates, data.name, 'stopped');
         });
 
         socket.on('vm_error', (data) => {

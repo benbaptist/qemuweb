@@ -104,6 +104,50 @@ Vue.component('vm-display', {
                 @touchstart.prevent="handleTouchStart"
                 @touchmove.prevent="handleTouchMove"
                 @touchend.prevent="handleTouchEnd">
+                
+                <!-- Powered Off Overlay -->
+                <div v-if="vmStatus === 'stopped'" 
+                     class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 text-white z-40">
+                    <div class="text-center">
+                        <div class="text-6xl mb-4">
+                            <i class="fas fa-power-off text-gray-400"></i>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-4">VM Powered Off</h2>
+                        <p class="text-gray-300 mb-6">The virtual machine is currently stopped.</p>
+                        <button @click="startVM" 
+                                :disabled="startingVM"
+                                class="px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors duration-200 flex items-center justify-center mx-auto">
+                            <i v-if="startingVM" class="fas fa-spinner fa-spin mr-2"></i>
+                            <i v-else class="fas fa-play mr-2"></i>
+                            {{ startingVM ? 'Starting...' : 'Start VM' }}
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Loading Overlay -->
+                <div v-if="vmStatus === 'unknown'" 
+                     class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 text-white z-40">
+                    <div class="text-center">
+                        <div class="text-6xl mb-4">
+                            <i class="fas fa-spinner fa-spin text-gray-400"></i>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-4">Loading VM Status</h2>
+                        <p class="text-gray-300">Checking virtual machine status...</p>
+                    </div>
+                </div>
+                
+                <!-- Reconnecting Overlay -->
+                <div v-if="vmStatus === 'running' && reconnecting && !connected" 
+                     class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 text-white z-40">
+                    <div class="text-center">
+                        <div class="text-6xl mb-4">
+                            <i class="fas fa-spinner fa-spin text-blue-400"></i>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-4">Connecting to Display</h2>
+                        <p class="text-gray-300">Establishing connection to virtual machine display...</p>
+                    </div>
+                </div>
+                
                 <canvas ref="canvas" tabindex="0" @contextmenu.prevent="handleContextMenu"
                         class="outline-none" 
                         :style="canvasStyle">
@@ -124,6 +168,9 @@ Vue.component('vm-display', {
             vmCanvasWidth: 0,
             vmCanvasHeight: 0,
             framesReceived: 0,
+            vmStatus: 'unknown', // Track VM status: 'running', 'stopped', 'unknown'
+            startingVM: false, // Track if VM is currently starting
+            reconnecting: false, // Track if we're in the middle of reconnection attempts
 
             // Display & Interaction State
             scale: 1.0,
@@ -204,36 +251,157 @@ Vue.component('vm-display', {
                 if (oldTarget) this.resizeObserver.unobserve(oldTarget);
                 if (newTarget) this.resizeObserver.observe(newTarget);
             }
+        },
+        vmStatus(newStatus) {
+            // When VM status changes, update connection state
+            if (newStatus === 'stopped') {
+                this.connected = false;
+            } else if (newStatus === 'running' && !this.connected) {
+                // VM is now running but we're not connected, try to reconnect
+                this.$nextTick(() => {
+                    this.reconnectDisplay();
+                });
+            }
         }
     },
 
-            mounted() {
-            this.setupSocket();
-            this.setupGlobalEventListeners();
-            this.setupResizeObserver();
-            
-            this.$nextTick(() => {
-                if (this.containerObserverTarget) {
-                    this.resizeObserver.observe(this.containerObserverTarget);
-                    // Initialize viewport size tracking
-                    const rect = this.containerObserverTarget.getBoundingClientRect();
-                    this.lastViewportSize = { width: rect.width, height: rect.height };
-                }
-                // Initial fit will happen on first frame or if vmCanvas dimensions already known
-                if(this.vmCanvasWidth > 0 && this.vmCanvasHeight > 0){
-                    this.fitToWindow(); // Enable fit-to-window mode by default
-                }
-                if (this.$refs.canvas) {
-                     this.$refs.canvas.focus();
-                }
-            });
-        },
+    mounted() {
+        this.setupSocket();
+        this.setupGlobalEventListeners();
+        this.setupResizeObserver();
+        this.loadVMStatus();
+        
+        // Set up periodic status check for the overlay
+        this.statusCheckInterval = setInterval(() => {
+            if (this.vmStatus === 'stopped' || this.vmStatus === 'unknown' || this.startingVM) {
+                this.loadVMStatus();
+            }
+        }, 2000); // Check every 2 seconds for stopped/unknown/starting states
+        
+        this.$nextTick(() => {
+            if (this.containerObserverTarget) {
+                this.resizeObserver.observe(this.containerObserverTarget);
+                // Initialize viewport size tracking
+                const rect = this.containerObserverTarget.getBoundingClientRect();
+                this.lastViewportSize = { width: rect.width, height: rect.height };
+            }
+            // Initial fit will happen on first frame or if vmCanvas dimensions already known
+            if(this.vmCanvasWidth > 0 && this.vmCanvasHeight > 0){
+                this.fitToWindow(); // Enable fit-to-window mode by default
+            }
+            if (this.$refs.canvas) {
+                 this.$refs.canvas.focus();
+            }
+        });
+    },
 
     beforeDestroy() {
         this.cleanup();
+        if (this.statusCheckInterval) {
+            clearInterval(this.statusCheckInterval);
+        }
     },
 
     methods: {
+        // --- VM Status Management ---
+        async loadVMStatus() {
+            try {
+                const response = await fetch(`/api/vms/${this.vmId}/status`);
+                if (response.ok) {
+                    const data = await response.json();
+                    this.vmStatus = data.running ? 'running' : 'stopped';
+                } else {
+                    this.vmStatus = 'unknown';
+                }
+            } catch (error) {
+                console.error('Failed to load VM status:', error);
+                this.vmStatus = 'unknown';
+            }
+        },
+        
+        async startVM() {
+            if (this.startingVM) return; // Prevent multiple simultaneous start requests
+            
+            this.startingVM = true;
+            try {
+                const response = await fetch(`/api/vms/${this.vmId}/start`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || `Failed to start VM: ${response.statusText}`);
+                }
+
+                // VM started successfully, status will be updated via WebSocket
+                console.log('VM start request sent successfully');
+                
+                // Check status immediately and then periodically
+                this.loadVMStatus();
+                setTimeout(() => {
+                    this.loadVMStatus();
+                }, 1000);
+                setTimeout(() => {
+                    this.loadVMStatus();
+                }, 3000);
+                
+            } catch (error) {
+                console.error('Failed to start VM:', error);
+                // You could show an error message to the user here
+            } finally {
+                this.startingVM = false;
+            }
+        },
+        
+        reconnectDisplay() {
+            console.log('Attempting to reconnect display for VM:', this.vmId);
+            
+            // Set reconnecting flag
+            this.reconnecting = true;
+            
+            // Clean up existing socket connection
+            if (this.socket) {
+                this.socket.disconnect();
+                this.socket = null;
+            }
+            
+            // Reset connection state
+            this.connected = false;
+            this.framesReceived = 0;
+            
+            // Try to reconnect with retries
+            this.attemptReconnect(0);
+        },
+        
+        attemptReconnect(attemptCount) {
+            const maxAttempts = 10; // Try for about 10 seconds
+            const delay = 1000; // 1 second between attempts
+            
+            if (attemptCount >= maxAttempts) {
+                console.log('Max reconnection attempts reached, giving up');
+                this.reconnecting = false; // Clear reconnecting flag
+                return;
+            }
+            
+            console.log(`Reconnection attempt ${attemptCount + 1}/${maxAttempts}`);
+            
+            // Wait before attempting to reconnect
+            setTimeout(() => {
+                this.setupSocket();
+                
+                // Check if connection was successful after a short delay
+                setTimeout(() => {
+                    if (!this.connected) {
+                        console.log('Reconnection failed, will retry...');
+                        this.attemptReconnect(attemptCount + 1);
+                    } else {
+                        console.log('Reconnection successful!');
+                        this.reconnecting = false; // Clear reconnecting flag
+                    }
+                }, 2000);
+            }, delay);
+        },
+
         // --- Toolbar Actions ---
         openMobileToolbar() {
             this.mobileToolbarOpen = true;
@@ -271,9 +439,29 @@ Vue.component('vm-display', {
                 this.socket.emit('init_display', { vm_id: this.vmId });
             });
             this.socket.on('disconnect', () => this.connected = false);
-            this.socket.on('error', (error) => console.error('Socket error:', error));
+            this.socket.on('error', (error) => {
+                console.error('Socket error:', error);
+                // Don't show error messages during reconnection attempts
+                if (!this.reconnecting) {
+                    console.error('Display connection error:', error);
+                }
+            });
             this.socket.on('vm_frame', this.handleFrame);
             this.socket.on('resolution_changed', this.handleResolutionChange);
+            
+            // Listen for VM status changes
+            this.socket.on('vm_stopped', (data) => {
+                if (data.name === this.vmId) {
+                    this.vmStatus = 'stopped';
+                }
+            });
+            
+            // Listen for VM status updates
+            this.socket.on('vm_status', (data) => {
+                if (data.name === this.vmId) {
+                    this.vmStatus = data.running ? 'running' : 'stopped';
+                }
+            });
         },
         async handleFrame(data) {
             this.framesReceived++;
