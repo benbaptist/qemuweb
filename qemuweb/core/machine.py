@@ -32,10 +32,17 @@ class DiskDevice:
 
     @staticmethod
     def from_dict(data):
+        device_type = data.get("type", "hdd")
+        # For CD-ROM devices, don't set a default format as QEMU will auto-detect
+        if device_type == "cdrom":
+            format_value = data.get("format", "")
+        else:
+            format_value = data.get("format", "qcow2")
+        
         return DiskDevice(
             path=data.get("path", ""),
-            type=data.get("type", "hdd"),
-            format=data.get("format", "qcow2"),
+            type=device_type,
+            format=format_value,
             interface=data.get("interface", "virtio"),
             readonly=data.get("readonly", False)
         )
@@ -650,10 +657,15 @@ class VMManager:
             if disk.readonly:
                 disk_opts.append("readonly=on")
             
+            # For CD-ROM devices, don't specify format as QEMU will auto-detect
+            if disk.type == "cdrom":
+                drive_spec = f"file={disk.path},if={disk.interface}"
+            else:
+                drive_spec = f"file={disk.path},if={disk.interface},format={disk.format}"
+            
             cmd.extend([
                 "-drive",
-                f"file={disk.path},if={disk.interface},format={disk.format}" + 
-                (f",{','.join(disk_opts)}" if disk_opts else "")
+                drive_spec + (f",{','.join(disk_opts)}" if disk_opts else "")
             ])
         
         # Additional arguments

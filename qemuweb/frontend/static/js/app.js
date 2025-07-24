@@ -162,7 +162,7 @@ const app = new Vue({
                         type: disk.type || 'disk',
                         path: disk.path || '',
                         interface: disk.interface || 'virtio',
-                        format: disk.format || 'qcow2',
+                        format: disk.type === 'cdrom' ? (disk.format || '') : (disk.format || 'qcow2'),
                         readonly: disk.readonly ?? false
                     })) : []
                 }));

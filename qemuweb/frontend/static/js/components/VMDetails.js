@@ -204,7 +204,7 @@ Vue.component('vm-details', {
                                             <template v-if="disk.readonly">(Read Only)</template>
                                         </div>
                                         <div class="text-gray-500">
-                                            Interface: {{ disk.interface }}, Format: {{ disk.format }}
+                                            Interface: {{ disk.interface }}{{ disk.type === 'cdrom' ? ', Format: Auto-detected' : ', Format: ' + disk.format }}
                                         </div>
                                     </div>
                                 </div>

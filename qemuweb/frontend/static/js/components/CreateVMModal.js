@@ -83,6 +83,15 @@ Vue.component('create-vm-modal', {
                     }
                 }
             }
+        },
+        'newVM.disks': {
+            deep: true,
+            handler(newDisks) {
+                // Watch for changes in disk types and update formats accordingly
+                newDisks.forEach(disk => {
+                    this.updateDiskFormat(disk);
+                });
+            }
         }
     },
     methods: {
@@ -115,6 +124,15 @@ Vue.component('create-vm-modal', {
                 format: 'qcow2',
                 readonly: false
             });
+        },
+        updateDiskFormat(disk) {
+            // When device type changes to cdrom, clear the format as it's not needed
+            if (disk.type === 'cdrom') {
+                disk.format = '';
+            } else if (disk.type === 'hdd' && !disk.format) {
+                // When changing back to hdd, set a default format
+                disk.format = 'qcow2';
+            }
         },
         removeDisk(index) {
             this.newVM.disks.splice(index, 1);
@@ -329,7 +347,7 @@ Vue.component('create-vm-modal', {
                                 <div class="grid grid-cols-2 gap-4">
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700">Device Type</label>
-                                        <select v-model="disk.type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                        <select v-model="disk.type" @change="updateDiskFormat(disk)" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                                             <option value="hdd">Hard Disk</option>
                                             <option value="cdrom">CD-ROM</option>
                                         </select>
@@ -360,6 +378,7 @@ Vue.component('create-vm-modal', {
                                             <option value="raw">Raw</option>
                                         </select>
                                     </div>
+
                                     <div class="col-span-2 flex items-center justify-between">
                                         <div class="flex items-center">
                                             <input v-model="disk.readonly" type="checkbox" 
