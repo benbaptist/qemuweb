@@ -135,6 +135,7 @@ class VMConfig:
     def __post_init__(self):
         # Create the directory for QMP sockets if it doesn't exist
         os.makedirs('/tmp/qmp_sockets', exist_ok=True)
+        logging.debug(f"Ensured QMP socket directory exists for VM config {self.name}")
         
         # Generate a unique QMP socket path based on the VM name
         safe_name = self.name.replace(" ", "_")  # Replace spaces with underscores for safety
@@ -233,6 +234,10 @@ class VMManager:
         self.monitor_threads: Dict[str, threading.Thread] = {}
         self.status_callback = None
         self.stopped_callback = None
+        
+        # Ensure QMP socket directory exists
+        os.makedirs('/tmp/qmp_sockets', exist_ok=True)
+        logging.info("Ensured QMP socket directory exists: /tmp/qmp_sockets")
         
         self.load_vm_configs()
         # Register cleanup on exit
@@ -388,9 +393,6 @@ class VMManager:
             # Save the updated configs
             self.save_vm_configs()
             
-            # Remove the config file from storage
-            config_manager.remove_vm_config(name)
-            
             return True
         return False
 
@@ -403,6 +405,10 @@ class VMManager:
         vm = self.get_vm(name)
         if not vm:
             return False, "VM not found"
+
+        # Ensure QMP socket directory exists (in case it was cleaned up by the system)
+        os.makedirs('/tmp/qmp_sockets', exist_ok=True)
+        logging.debug(f"Ensured QMP socket directory exists for VM {name}")
 
         # Dynamically assign a VNC port if not set
         if vm.display.type == "vnc" and not vm.display.port:
